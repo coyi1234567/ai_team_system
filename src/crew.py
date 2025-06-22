@@ -3,12 +3,16 @@ import sys
 import datetime
 from crewai import Crew, Agent, Task
 from .crew_tools import MCPTool
+from pydantic import PrivateAttr
+from typing import Optional, cast
 
 class LoggingAgent(Agent):
-    def __init__(self, *args, project_id=None, project_dir=None, **kwargs):
+    _project_id: 'str' = PrivateAttr(default="")
+    _project_dir: 'str' = PrivateAttr(default="")
+    def __init__(self, *args, project_id: str = "", project_dir: str = "", **kwargs):
         super().__init__(*args, **kwargs)
-        self.project_id = project_id
-        self.project_dir = project_dir
+        self._project_id = project_id or ""
+        self._project_dir = project_dir or ""
 
     def execute_task(self, task, context=None, tools=None):
         task_prompt = task.prompt()
@@ -29,8 +33,8 @@ class LoggingAgent(Agent):
         print(f"============================================\n")
         sys.stdout.flush()
         # 日志落盘
-        if self.project_dir:
-            log_path = os.path.join(self.project_dir, 'llm_log.txt')
+        if self._project_dir:
+            log_path = os.path.join(self._project_dir, 'llm_log.txt')
             with open(log_path, 'a', encoding='utf-8') as f:
                 f.write(f"[{now}] 角色: {role} 任务: {task_name}\n")
                 f.write(f"【输入Prompt】\n{task_prompt}\n")
@@ -38,7 +42,72 @@ class LoggingAgent(Agent):
                     f.write(f"【上下文】\n{context}\n")
                 f.write(f"【输出Result】\n{result}\n")
                 f.write(f"--------------------------------------------\n")
+        # === 自动产出落盘机制 ===
+        if self._project_dir and isinstance(self._project_dir, str) and self._project_dir.strip() != "" and task_name:
+            project_dir: str = self._project_dir
+            name_map = {
+                'requirement_analysis': '需求分析.md',
+                'technical_design': '技术设计.md',
+                'ui_design': 'UI设计.md',
+                'algorithm_design': '算法设计.md',
+                'frontend_development': 'frontend/前端开发.md',
+                'backend_development': 'backend/后端开发.md',
+                'data_analysis': '数据分析报告.md',
+                'testing': '测试报告.md',
+                'deployment': '部署文档.md',
+                'documentation': '项目文档.md',
+                'acceptance': '项目验收报告.md',
+            }
+            out_file = name_map.get(task_name, f'{task_name}.md')
+            if out_file and isinstance(out_file, str):
+                out_path = os.path.join(project_dir, out_file)
+                os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                if 'Dockerfile' in result:
+                    dockerfile_path = os.path.join(project_dir, 'Dockerfile')
+                    docker_content = self._extract_block(result, 'Dockerfile')
+                    if docker_content:
+                        with open(dockerfile_path, 'w', encoding='utf-8') as f:
+                            f.write(docker_content.strip() + '\n')
+                self._extract_and_write_code_blocks(result)
+                with open(out_path, 'w', encoding='utf-8') as f:
+                    f.write(result.strip() + '\n')
         return result
+
+    def _extract_block(self, text, block_name):
+        """提取如```Dockerfile ...```或```block_name ...```的内容"""
+        import re
+        pattern = rf'```{block_name}([\s\S]*?)```'
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        return None
+
+    def _extract_and_write_code_blocks(self, text):
+        """自动提取并写入代码块到对应文件"""
+        import re
+        code_blocks = re.findall(r'```(\w+)?\n([\s\S]*?)```', text)
+        for lang, code in code_blocks:
+            ext_map = {
+                'python': '.py', 'js': '.js', 'javascript': '.js', 'ts': '.ts', 'java': '.java',
+                'go': '.go', 'c': '.c', 'cpp': '.cpp', 'html': '.html', 'css': '.css',
+                'sh': '.sh', 'bash': '.sh', 'Dockerfile': 'Dockerfile',
+            }
+            ext = ext_map.get(lang.lower(), '.txt') if lang else '.txt'
+            # 文件名自动递增防止覆盖
+            base = lang if lang else 'code'
+            idx = 1
+            while True:
+                fname = f'{base}_{idx}{ext}' if ext != 'Dockerfile' else 'Dockerfile'
+                fpath = os.path.join(self._project_dir, fname)
+                if not os.path.exists(fpath):
+                    break
+                idx += 1
+            # Dockerfile 特殊处理
+            if ext == 'Dockerfile':
+                fpath = os.path.join(self._project_dir, 'Dockerfile')
+            os.makedirs(os.path.dirname(fpath), exist_ok=True)
+            with open(fpath, 'w', encoding='utf-8') as f:
+                f.write(code.strip() + '\n')
 
 # 角色定义 - 优化提示词，增加更多专业角色
 AGENTS = {
@@ -48,8 +117,8 @@ AGENTS = {
         backstory=v.backstory,
         llm=v.llm,
         tools=v.tools,
-        project_id=None,  # 由AiTeamCrew注入
-        project_dir=None  # 由AiTeamCrew注入
+        project_id="",  # 统一用空字符串
+        project_dir=""   # 统一用空字符串
     ) for k, v in {
         "boss": Agent(
             role="项目总监",
@@ -443,10 +512,12 @@ TASKS = [
 
 class AiTeamCrew:
     def __init__(self, project_id=None, project_dir=None):
-        # 注入project_id和产出目录到所有Agent
+        # 注入project_id和产出目录到所有Agent，强制转为str，保证类型安全
+        pid = str(project_id) if project_id is not None else ""
+        pdir = str(project_dir) if project_dir is not None else ""
         for agent in AGENTS.values():
-            agent.project_id = project_id
-            agent.project_dir = project_dir
+            agent._project_id = pid
+            agent._project_dir = pdir
         self.crew = Crew(agents=list(AGENTS.values()), tasks=TASKS)
 
     def kickoff(self, inputs):
