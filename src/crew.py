@@ -602,6 +602,16 @@ class AiTeamCrew:
         )
         results["frontend_development"] = consensus
         context["frontend_development_result"] = consensus
+        
+        # 4.1 前端代码生成阶段（单Agent执行）
+        task = next(t for t in TASKS if t.name == "frontend_development")
+        agent = task.agent
+        if agent is not None:
+            context_str = str(context) if context else None
+            result = agent.execute_task(task, context=context_str, tools=task.tools)
+            results["frontend_code"] = result
+            context["frontend_code_result"] = result
+        
         # 5. 后端开发阶段：后端-技术总监-产品经理多轮对话
         consensus = multi_agent_discussion(
             stage_name="后端开发",
@@ -612,6 +622,15 @@ class AiTeamCrew:
         )
         results["backend_development"] = consensus
         context["backend_development_result"] = consensus
+        
+        # 5.1 后端代码生成阶段（单Agent执行）
+        task = next(t for t in TASKS if t.name == "backend_development")
+        agent = task.agent
+        if agent is not None:
+            context_str = str(context) if context else None
+            result = agent.execute_task(task, context=context_str, tools=task.tools)
+            results["backend_code"] = result
+            context["backend_code_result"] = result
         # 6. 数据分析、测试、部署、文档阶段（单Agent串行）
         for name in ["data_analysis", "testing", "deployment", "documentation"]:
             task = next(t for t in TASKS if t.name == name)
