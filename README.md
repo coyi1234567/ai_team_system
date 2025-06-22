@@ -38,6 +38,19 @@ ai_team_system/
 
 ---
 
+## 环境变量与自动加载
+
+本项目所有敏感配置（如OPENAI_API_KEY）均存放于根目录的.env文件，例如：
+```
+OPENAI_API_BASE=https://api.openai-proxy.org/v1
+OPENAI_API_KEY=sk-xxxxxx
+```
+- **自动加载机制**：主程序已集成python-dotenv，运行时会自动加载.env，无需手动source。
+- **常见问题排查**：如遇到LLM相关API报错，请优先检查.env文件内容和路径，确保key有效。
+- **无需手动source .env**：直接运行python -m src.main ... 即可，环境变量会自动生效。
+
+---
+
 ## 快速上手
 
 ### 1. 安装依赖

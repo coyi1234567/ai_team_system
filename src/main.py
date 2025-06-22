@@ -11,6 +11,11 @@ from dotenv import load_dotenv
 # 自动加载.env环境变量
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '../.env'))
 
+# 检查OPENAI_API_KEY是否加载成功
+if not os.getenv('OPENAI_API_KEY'):
+    print("[FATAL] 未检测到OPENAI_API_KEY环境变量，请检查.ai_team_system/.env文件并确保主程序有权限读取！")
+    sys.exit(1)
+
 PROJECTS_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../projects'))
 LOGS_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../logs'))
 ARCHIVE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../archive'))
