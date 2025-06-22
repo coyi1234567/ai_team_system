@@ -1,5 +1,5 @@
 import typer
-from .crew_core import AiTeamCrew
+from .crew import AiTeamCrew
 import traceback
 import sys
 import os
