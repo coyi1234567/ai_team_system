@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-AI团队系统 - 主程序
-一个基于LLM的智能开发团队协作系统
+AI团队系统 - 基于CrewAI的多Agent协作系统
+支持11个专业角色的智能团队协作
 """
 
 import os
@@ -11,164 +11,144 @@ from dotenv import load_dotenv
 import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.markdown import Markdown
 
 # 添加src目录到Python路径
 sys.path.append(str(Path(__file__).parent / "src"))
 
-from src.team_manager import TeamManager
-from src.models import ProjectReport
+from src.crew import AiTeamCrew
 
 # 加载环境变量
 load_dotenv()
 
-app = typer.Typer(help="AI团队系统 - 智能开发团队协作")
+app = typer.Typer(help="AI团队系统 - 基于CrewAI的多Agent协作系统")
 console = Console()
 
 @app.command()
 def init():
     """初始化系统"""
     console.print(Panel.fit(
-        "[bold blue]AI团队系统[/bold blue]\n"
-        "一个基于LLM的智能开发团队协作系统\n"
-        "支持从需求分析到部署运维的全流程自动化",
+        "[bold blue]AI团队系统 - CrewAI版本[/bold blue]\n"
+        "基于CrewAI框架的多Agent协作系统\n"
+        "支持11个专业角色的智能团队协作\n"
+        "集成MCP工具，实现标准化Agent协作",
         title="欢迎使用"
     ))
-    
-    # 检查配置文件
-    config_path = Path("config/team_config.yaml")
-    if not config_path.exists():
-        console.print("[red]配置文件不存在，请确保config/team_config.yaml文件存在[/red]")
-        return
     
     # 检查环境变量
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        console.print("[yellow]警告: 未设置OPENAI_API_KEY环境变量，将使用模拟模式[/yellow]")
+        console.print("[yellow]警告: 未设置OPENAI_API_KEY环境变量[/yellow]")
+        console.print("请设置环境变量: export OPENAI_API_KEY='your-api-key'")
+        return
     
     console.print("[green]✅ 系统初始化完成[/green]")
+    console.print(f"API密钥状态: {'✅ 已设置' if api_key else '❌ 未设置'}")
 
 @app.command()
 def team():
-    """显示团队信息"""
-    try:
-        manager = TeamManager()
-        manager.show_team_info()
-    except Exception as e:
-        console.print(f"[red]错误: {e}[/red]")
+    """显示团队成员信息"""
+    console.print(Panel.fit(
+        """[bold]团队成员 (11人):[/bold]
+
+👔 [cyan]张总[/cyan] - 项目总监 (15年经验)
+📋 [cyan]李产品[/cyan] - 产品经理 (8年经验)  
+🏗️ [cyan]王技术[/cyan] - 技术总监 (12年经验)
+🧠 [cyan]陈算法[/cyan] - 算法工程师 (10年经验)
+🎨 [cyan]林设计[/cyan] - UI设计师 (7年经验)
+💻 [cyan]陈前端[/cyan] - 前端开发 (6年经验)
+⚙️ [cyan]刘后端[/cyan] - 后端开发 (8年经验)
+📊 [cyan]赵数据[/cyan] - 数据分析师 (5年经验)
+🔍 [cyan]赵测试[/cyan] - 测试工程师 (7年经验)
+🚀 [cyan]孙运维[/cyan] - DevOps工程师 (6年经验)
+📝 [cyan]王文员[/cyan] - 项目文员 (4年经验)""",
+        title="团队信息"
+    ))
 
 @app.command()
 def create(
     name: str = typer.Option(..., "--name", "-n", help="项目名称"),
     description: str = typer.Option(..., "--description", "-d", help="项目描述"),
-    requirements: str = typer.Option(..., "--requirements", "-r", help="项目需求"),
-    client: str = typer.Option(None, "--client", "-c", help="客户名称"),
-    budget: float = typer.Option(None, "--budget", "-b", help="项目预算")
+    requirements: str = typer.Option(..., "--requirements", "-r", help="项目需求")
 ):
-    """创建新项目"""
+    """创建并执行新项目"""
     try:
-        manager = TeamManager()
-        project = manager.create_project(
-            name=name,
-            description=description,
-            requirements=requirements,
-            client=client,
-            budget=budget
-        )
+        console.print(f"[bold blue]🚀 开始执行项目: {name}[/bold blue]")
+        console.print(f"项目描述: {description}")
+        console.print(f"项目需求: {requirements}")
+        console.print()
         
-        console.print(f"\n[bold green]项目创建成功！[/bold green]")
-        console.print(f"项目ID: [cyan]{project.id}[/cyan]")
-        console.print(f"项目名称: [green]{project.name}[/green]")
-        console.print(f"项目描述: {project.description}")
+        inputs = {
+            'project_name': name,
+            'project_description': description,
+            'requirements': requirements
+        }
         
-    except Exception as e:
-        console.print(f"[red]创建项目失败: {e}[/red]")
-
-@app.command()
-def execute(
-    project_id: str = typer.Option(..., "--id", "-i", help="项目ID")
-):
-    """执行项目"""
-    try:
-        manager = TeamManager()
+        result = AiTeamCrew().kickoff(inputs=inputs)
         
-        # 检查项目是否存在
-        if project_id not in manager.projects:
-            console.print(f"[red]项目 {project_id} 不存在[/red]")
-            return
-        
-        # 执行项目
-        report = manager.execute_project(project_id)
-        
-        # 显示项目报告
         console.print("\n" + "="*60)
-        console.print("[bold blue]📊 项目执行报告[/bold blue]")
+        console.print("[bold green]🎉 项目执行完成！[/bold green]")
         console.print("="*60)
-        
-        console.print(f"项目ID: {report.project_id}")
-        console.print(f"当前阶段: {report.phase.value}")
-        console.print(f"完成进度: {report.progress}%")
-        console.print(f"完成时间: {report.generated_at.strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        console.print(f"\n[bold]已完成任务:[/bold]")
-        for task in report.completed_tasks:
-            console.print(f"  ✅ {task}")
-        
-        console.print(f"\n[bold]下一步计划:[/bold]")
-        for step in report.next_steps:
-            console.print(f"  📋 {step}")
+        console.print(result)
         
     except Exception as e:
-        console.print(f"[red]执行项目失败: {e}[/red]")
-
-@app.command()
-def list():
-    """列出所有项目"""
-    try:
-        manager = TeamManager()
-        manager.list_projects()
-    except Exception as e:
-        console.print(f"[red]获取项目列表失败: {e}[/red]")
+        console.print(f"[red]项目执行失败: {e}[/red]")
 
 @app.command()
 def demo():
     """运行演示项目"""
     console.print("[bold blue]🎬 运行演示项目[/bold blue]")
     
-    try:
-        manager = TeamManager()
-        
-        # 创建演示项目
-        demo_project = manager.create_project(
-            name="在线图书管理系统",
-            description="一个功能完整的图书管理平台",
-            requirements="""
-开发一个在线图书管理系统，功能包括：
-1. 用户注册和登录
-2. 图书信息管理（增删改查）
-3. 图书借阅和归还
-4. 用户借阅历史查询
-5. 图书搜索和分类
-6. 管理员后台管理
+    demo_inputs = {
+        'project_name': '智能待办事项管理系统',
+        'project_description': '一个功能完整的智能待办事项管理平台',
+        'requirements': """开发一个智能待办事项管理系统，具体需求如下：
 
-技术要求：
-- 前端使用React + TypeScript
-- 后端使用Python FastAPI
-- 数据库使用PostgreSQL
-- 部署使用Docker + Nginx
-- 支持响应式设计
-            """,
-            client="演示客户",
-            budget=50000.0
-        )
-        
-        console.print(f"\n[green]演示项目创建成功，ID: {demo_project.id}[/green]")
-        
-        # 执行项目
-        report = manager.execute_project(demo_project.id)
-        
+1. 用户功能：
+   - 用户注册、登录、个人信息管理
+   - 任务创建、编辑、删除、完成状态切换
+   - 任务分类管理（工作、生活、学习、健康等）
+   - 任务优先级设置（高、中、低）
+   - 任务标签系统
+   - 任务搜索和筛选
+
+2. 智能功能：
+   - 智能任务提醒（基于截止时间和优先级）
+   - 任务完成时间预测
+   - 个人效率统计分析
+   - 智能任务建议
+   - 习惯养成追踪
+
+3. 协作功能：
+   - 任务分享和协作
+   - 团队任务管理
+   - 任务评论和讨论
+
+4. 技术需求：
+   - 前端：React + TypeScript + Ant Design
+   - 后端：Python FastAPI + SQLAlchemy
+   - 数据库：PostgreSQL
+   - 缓存：Redis
+   - 消息队列：Celery + Redis
+   - 部署：Docker + Nginx
+   - 监控：Prometheus + Grafana
+
+5. 性能要求：
+   - 支持1000+并发用户
+   - 响应时间 < 200ms
+   - 99.9%可用性
+   - 数据备份和恢复机制
+
+6. 安全要求：
+   - JWT身份认证
+   - 数据加密存储
+   - API访问限制
+   - 日志审计"""
+    }
+    
+    try:
+        result = AiTeamCrew().kickoff(inputs=demo_inputs)
         console.print(f"\n[bold green]🎉 演示项目执行完成！[/bold green]")
-        
+        console.print(result)
     except Exception as e:
         console.print(f"[red]演示项目执行失败: {e}[/red]")
 
@@ -195,16 +175,6 @@ python main.py team
 python main.py create --name "项目名称" --description "项目描述" --requirements "项目需求"
 ```
 
-### 执行项目
-```bash
-python main.py execute --id "项目ID"
-```
-
-### 列出项目
-```bash
-python main.py list
-```
-
 ### 运行演示
 ```bash
 python main.py demo
@@ -214,29 +184,33 @@ python main.py demo
 
 1. 创建 `.env` 文件
 2. 设置 `OPENAI_API_KEY=your-api-key`
-3. 确保 `config/team_config.yaml` 配置文件存在
+3. 可选：设置 `OPENAI_API_BASE=https://api.openai-proxy.org/v1`
 
 ## 项目流程
 
-1. **需求分析** - 产品经理分析客户需求
-2. **技术设计** - 技术负责人设计架构
-3. **开发实现** - 开发团队编写代码
-4. **测试验证** - 测试团队验证质量
-5. **部署运维** - 运维团队部署系统
-6. **项目验收** - 项目总监最终验收
+1. **需求分析** - 产品经理分析用户需求
+2. **技术设计** - 技术总监设计系统架构
+3. **UI设计** - UI设计师设计用户界面
+4. **算法设计** - 算法工程师设计智能算法
+5. **前端开发** - 前端工程师实现界面
+6. **后端开发** - 后端工程师实现服务
+7. **数据分析** - 数据分析师提供数据洞察
+8. **测试验证** - 测试工程师验证质量
+9. **部署运维** - DevOps工程师部署系统
+10. **文档整理** - 项目文员整理文档
+11. **项目验收** - 项目总监最终验收
 
-## 团队成员
+## 特色功能
 
-- **张总** - 项目总监
-- **李产品** - 产品经理
-- **王架构** - 技术负责人
-- **陈前端** - 前端开发
-- **刘后端** - 后端开发
-- **赵测试** - 测试工程师
-- **孙运维** - DevOps工程师
+- 🤖 **11个专业角色**: 覆盖产品、技术、设计、开发、测试、运维等全流程
+- 🧠 **智能算法**: 集成机器学习算法，提供智能解决方案
+- 🎨 **专业设计**: UI设计师确保产品美观易用
+- 📊 **数据分析**: 数据分析师提供数据洞察
+- 📝 **文档管理**: 项目文员确保信息有序管理
+- 🔧 **MCP工具**: 集成MCP协议，支持标准化工具调用
     """
     
-    console.print(Markdown(help_text))
+    console.print(help_text)
 
 if __name__ == "__main__":
     app() 

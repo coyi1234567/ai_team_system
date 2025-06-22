@@ -1,0 +1,219 @@
+# AI模型配置 - 最新价格表
+# 默认模型: gpt-4.1-mini
+
+models:
+  # 默认模型 - 性价比最高
+  gpt-4.1-mini:
+    name: "GPT-4.1 Mini"
+    provider: "OpenAI"
+    description: "最新版本，性价比极高，适合日常开发任务"
+    price_per_1k_tokens:
+      input: 0.0006  # $0.4 × 1.5 / 1000
+      output: 0.0024  # $1.6 × 1.5 / 1000
+    capabilities:
+      - "代码生成"
+      - "文本理解"
+      - "问题解答"
+      - "内容创作"
+    best_for:
+      - "日常开发任务"
+      - "代码编写"
+      - "文档生成"
+      - "测试用例设计"
+    max_tokens: 128000
+    temperature_range: [0.0, 2.0]
+    rate_limit: "1000 RPM"
+
+  # 高性能模型
+  gpt-4.1:
+    name: "GPT-4.1"
+    provider: "OpenAI"
+    description: "最新版本，性能强大，适合复杂任务"
+    price_per_1k_tokens:
+      input: 0.003  # $2 × 1.5 / 1000
+      output: 0.012  # $8 × 1.5 / 1000
+    capabilities:
+      - "复杂推理"
+      - "代码分析"
+      - "创意写作"
+      - "数学计算"
+    best_for:
+      - "复杂项目管理"
+      - "技术架构设计"
+      - "商业决策分析"
+      - "创意产品设计"
+    max_tokens: 128000
+    temperature_range: [0.0, 2.0]
+    rate_limit: "1000 RPM"
+
+  # 超高性能模型
+  o4-mini:
+    name: "O4 Mini"
+    provider: "OpenAI"
+    description: "最新O系列模型，性能卓越"
+    price_per_1k_tokens:
+      input: 0.00165  # $1.1 × 1.5 / 1000
+      output: 0.0066  # $4.4 × 1.5 / 1000
+    capabilities:
+      - "高级推理"
+      - "复杂代码生成"
+      - "深度分析"
+      - "创意设计"
+    best_for:
+      - "高级技术分析"
+      - "复杂系统设计"
+      - "创新产品开发"
+      - "战略规划"
+    max_tokens: 128000
+    temperature_range: [0.0, 2.0]
+    rate_limit: "1000 RPM"
+
+  o4:
+    name: "O4"
+    provider: "OpenAI"
+    description: "最新O系列模型，最强大的AI能力"
+    price_per_1k_tokens:
+      input: 0.003  # $2 × 1.5 / 1000
+      output: 0.012  # $8 × 1.5 / 1000
+    capabilities:
+      - "超强推理"
+      - "复杂问题解决"
+      - "创新思维"
+      - "多领域专家"
+    best_for:
+      - "复杂项目管理"
+      - "技术架构设计"
+      - "商业决策分析"
+      - "创意产品设计"
+    max_tokens: 128000
+    temperature_range: [0.0, 2.0]
+    rate_limit: "500 RPM"
+
+  # 经济型模型
+  gpt-4.1-nano:
+    name: "GPT-4.1 Nano"
+    provider: "OpenAI"
+    description: "最经济实惠的模型"
+    price_per_1k_tokens:
+      input: 0.00015  # $0.1 × 1.5 / 1000
+      output: 0.0006  # $0.4 × 1.5 / 1000
+    capabilities:
+      - "基础文本处理"
+      - "简单代码生成"
+      - "问答对话"
+    best_for:
+      - "简单任务"
+      - "快速原型"
+      - "基础文档"
+    max_tokens: 128000
+    temperature_range: [0.0, 2.0]
+    rate_limit: "1000 RPM"
+
+  # 传统模型（备用）
+  gpt-4o-mini:
+    name: "GPT-4o Mini"
+    provider: "OpenAI"
+    description: "GPT-4o的轻量版本"
+    price_per_1k_tokens:
+      input: 0.000225  # $0.15 × 1.5 / 1000
+      output: 0.0009  # $0.6 × 1.5 / 1000
+    capabilities:
+      - "文本理解"
+      - "代码生成"
+      - "问题解答"
+      - "内容创作"
+    best_for:
+      - "日常开发任务"
+      - "代码编写"
+      - "文档生成"
+      - "测试用例设计"
+    max_tokens: 128000
+    temperature_range: [0.0, 2.0]
+    rate_limit: "1000 RPM"
+
+  gpt-4o:
+    name: "GPT-4o"
+    provider: "OpenAI"
+    description: "GPT-4o模型，支持多模态"
+    price_per_1k_tokens:
+      input: 0.00375  # $2.5 × 1.5 / 1000
+      output: 0.015  # $10 × 1.5 / 1000
+    capabilities:
+      - "多模态理解"
+      - "复杂推理"
+      - "创意写作"
+      - "代码生成"
+    best_for:
+      - "复杂项目管理"
+      - "技术架构设计"
+      - "商业决策分析"
+      - "创意产品设计"
+    max_tokens: 128000
+    temperature_range: [0.0, 2.0]
+    rate_limit: "500 RPM"
+
+# 角色模型推荐配置
+role_model_recommendations:
+  boss:
+    primary: "gpt-4.1"
+    fallback: "gpt-4.1-mini"
+    reason: "需要强大的商业决策和项目管理能力"
+  
+  product_manager:
+    primary: "gpt-4.1"
+    fallback: "gpt-4.1-mini"
+    reason: "需要深入的产品分析和用户研究能力"
+  
+  tech_lead:
+    primary: "o4-mini"
+    fallback: "gpt-4.1"
+    reason: "需要复杂的技术架构设计和代码分析能力"
+  
+  frontend_dev:
+    primary: "gpt-4.1-mini"
+    fallback: "gpt-4.1-nano"
+    reason: "需要代码生成能力，但不需要最复杂的推理"
+  
+  backend_dev:
+    primary: "gpt-4.1-mini"
+    fallback: "gpt-4.1-nano"
+    reason: "需要代码生成和系统设计能力"
+  
+  qa_engineer:
+    primary: "gpt-4.1-mini"
+    fallback: "gpt-4.1-nano"
+    reason: "需要测试用例设计和质量分析能力"
+  
+  devops_engineer:
+    primary: "gpt-4.1-mini"
+    fallback: "gpt-4.1-nano"
+    reason: "需要系统配置和自动化脚本生成能力"
+
+# 成本优化策略
+cost_optimization:
+  budget_conscious:
+    description: "预算敏感型配置"
+    models:
+      - "gpt-4.1-nano"
+      - "gpt-4.1-mini"
+      - "gpt-4o-mini"
+  
+  balanced:
+    description: "平衡性能和成本"
+    models:
+      - "gpt-4.1-mini"
+      - "gpt-4.1"
+      - "o4-mini"
+  
+  performance_first:
+    description: "性能优先配置"
+    models:
+      - "o4"
+      - "o4-mini"
+      - "gpt-4.1"
+
+# 默认配置
+defaults:
+  model: "gpt-4.1-mini"
+  temperature: 0.3
+  max_tokens: 1500 
