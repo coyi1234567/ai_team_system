@@ -6,6 +6,8 @@ from .crew_tools import MCPTool
 from pydantic import PrivateAttr
 from typing import Optional, cast, List
 import subprocess
+from mcp_server import MCPServer
+import re
 
 class LoggingAgent(Agent):
     _project_id: 'str' = PrivateAttr(default="")
@@ -450,6 +452,13 @@ def run_command_with_log(cmd, cwd, log_path):
             f.write(f"[EXCEPTION] {e}\n")
             return -1, '', str(e)
 
+def extract_error_summary(log):
+    """自动提取日志中的关键报错信息"""
+    # 简单正则提取常见报错行
+    lines = log.splitlines()
+    error_lines = [l for l in lines if re.search(r'(error|exception|fail|traceback|not found|denied|refused|exit code)', l, re.I)]
+    return '\n'.join(error_lines[-10:]) if error_lines else '\n'.join(lines[-10:])
+
 class AiTeamCrew:
     def __init__(self, project_id=None, project_dir=None):
         pid = str(project_id) if project_id is not None else ""
@@ -459,26 +468,72 @@ class AiTeamCrew:
             agent._project_dir = pdir
         self.crew = Crew(agents=list(AGENTS.values()), tasks=TASKS)
 
-    def auto_execute_and_fix(self, project_dir, file_to_run, agent, max_retry=3, run_type='python'):
+    def auto_execute_and_fix(self, project_dir, file_to_run, agent_list, run_type='python', custom_cmd=None, use_mcp=False, max_retry=3):
         """
-        自动执行产出文件，捕获日志，失败时自动修正并重试。
-        run_type: 'python' 或 'docker'
+        支持多执行类型、MCP远程执行、日志摘要与多Agent修正。
+        agent_list: 参与修正的Agent列表（如[开发, 测试, 运维]）
+        run_type: python/shell/npm/pytest/docker/custom
+        custom_cmd: 自定义命令
+        use_mcp: 是否优先用MCP远程执行
         """
         log_path = os.path.join(project_dir, 'auto_exec_log.txt')
+        mcp = MCPServer(workspace_path=project_dir) if use_mcp else None
         for attempt in range(1, max_retry+1):
+            # 1. 构造命令
             if run_type == 'python':
                 cmd = f'python {file_to_run}'
+            elif run_type == 'shell':
+                cmd = f'bash {file_to_run}'
+            elif run_type == 'npm':
+                cmd = f'npm run {file_to_run}'
+            elif run_type == 'pytest':
+                cmd = f'pytest {file_to_run or ""}'
             elif run_type == 'docker':
                 cmd = f'docker build -t tempimg . && docker run --rm tempimg'
+            elif run_type == 'custom' and custom_cmd:
+                cmd = custom_cmd
             else:
                 return False
-            exitcode, out, err = run_command_with_log(cmd, project_dir, log_path)
+            # 2. 执行命令
+            if use_mcp and mcp:
+                if run_type == 'python' or run_type == 'shell' or run_type == 'pytest':
+                    result = mcp.execute_code(os.path.join(project_dir, file_to_run))
+                    exitcode = getattr(result, 'exit_code', 1)
+                    out = getattr(result, 'output', '')
+                    err = getattr(result, 'error', '')
+                    logs = out + '\n' + err
+                elif run_type == 'docker':
+                    image_name = f"{os.path.basename(project_dir)}:latest"
+                    build_result = mcp.build_docker_image(project_dir, image_name)
+                    logs = getattr(build_result, 'logs', '')
+                    if not build_result.success:
+                        exitcode = 1
+                        out = ''
+                        err = build_result.message
+                    else:
+                        run_result = mcp.run_docker_container(image_name, f"{os.path.basename(project_dir)}-container")
+                        logs += '\n' + getattr(run_result, 'logs', '')
+                        exitcode = 0 if run_result.success else 1
+                        out = run_result.logs
+                        err = run_result.message if not run_result.success else ''
+                else:
+                    # 其它类型暂不支持MCP
+                    exitcode, out, err, logs = 1, '', 'MCP暂不支持该类型', 'MCP暂不支持该类型'
+            else:
+                exitcode, out, err = run_command_with_log(cmd, project_dir, log_path)
+                logs = out + '\n' + err
+            # 3. 日志归档
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(f"[SUMMARY_ATTEMPT_{attempt}]\n{extract_error_summary(logs)}\n")
+            # 4. 成功则返回
             if exitcode == 0:
                 return True
-            # 失败时，将日志作为Agent输入，自动修正
-            fix_prompt = f"上次自动执行命令失败，日志如下：\nSTDOUT:\n{out}\nSTDERR:\n{err}\n请修正你的产出，确保下次执行通过。"
-            fix_task = Task(name="auto_fix", description=fix_prompt, expected_output="请修正产出代码/配置。", agent=agent)
-            agent.execute_task(fix_task, context=fix_prompt, tools=agent.tools)
+            # 5. 失败时多Agent多轮修正
+            summary = extract_error_summary(logs)
+            fix_prompt = f"自动执行命令失败，日志摘要如下：\n{summary}\n请修正产出，确保下次执行通过。"
+            for agent in agent_list:
+                fix_task = Task(name=f"auto_fix_{run_type}_attempt{attempt}", description=fix_prompt, expected_output="请修正产出代码/配置。", agent=agent)
+                agent.execute_task(fix_task, context=fix_prompt, tools=agent.tools)
         return False
 
     def kickoff(self, inputs):
@@ -559,13 +614,40 @@ class AiTeamCrew:
         )
         results["acceptance"] = consensus
         context["acceptance_result"] = consensus
-        # 8. 自动执行与修正闭环（以main.py和Dockerfile为例）
-        # 自动执行main.py
+        # 8. 自动执行与修正闭环（多类型、多Agent、多环境）
+        # 1) main.py
         main_py = os.path.join(project_dir, 'main.py')
         if os.path.exists(main_py):
-            self.auto_execute_and_fix(project_dir, 'main.py', AGENTS["backend_dev"], max_retry=3, run_type='python')
-        # 自动构建并运行Dockerfile
+            self.auto_execute_and_fix(
+                project_dir, 'main.py',
+                agent_list=[AGENTS["backend_dev"], AGENTS["qa_engineer"]],
+                run_type='python', use_mcp=True, max_retry=3)
+        # 2) shell脚本
+        shell_file = os.path.join(project_dir, 'deploy.sh')
+        if os.path.exists(shell_file):
+            self.auto_execute_and_fix(
+                project_dir, 'deploy.sh',
+                agent_list=[AGENTS["devops_engineer"]],
+                run_type='shell', use_mcp=True, max_retry=2)
+        # 3) npm前端
+        frontend_dir = os.path.join(project_dir, 'frontend')
+        if os.path.exists(frontend_dir):
+            self.auto_execute_and_fix(
+                frontend_dir, 'build',
+                agent_list=[AGENTS["frontend_dev"], AGENTS["qa_engineer"]],
+                run_type='npm', use_mcp=True, max_retry=2)
+        # 4) pytest自动化测试
+        test_file = os.path.join(project_dir, 'tests')
+        if os.path.exists(test_file):
+            self.auto_execute_and_fix(
+                project_dir, '',
+                agent_list=[AGENTS["qa_engineer"], AGENTS["backend_dev"]],
+                run_type='pytest', use_mcp=True, max_retry=2)
+        # 5) Dockerfile
         dockerfile = os.path.join(project_dir, 'Dockerfile')
         if os.path.exists(dockerfile):
-            self.auto_execute_and_fix(project_dir, '', AGENTS["devops_engineer"], max_retry=2, run_type='docker')
+            self.auto_execute_and_fix(
+                project_dir, '',
+                agent_list=[AGENTS["devops_engineer"], AGENTS["backend_dev"]],
+                run_type='docker', use_mcp=True, max_retry=2)
         return results 

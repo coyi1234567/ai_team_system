@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 import logging
+from docker.errors import NotFound
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -303,13 +304,13 @@ CMD ["npm", "start"]
             
             log_output = ""
             for log in logs:
-                if 'stream' in log:
-                    log_output += log['stream']
+                if isinstance(log, dict) and 'stream' in log:
+                    log_output += str(log['stream'])
             
             return DockerResult(
                 True,
                 f"Docker镜像构建成功: {image_name}",
-                image_id=image.id,
+                image_id=str(image.id) if image.id is not None else "",
                 logs=log_output
             )
             
@@ -330,14 +331,23 @@ CMD ["npm", "start"]
                 existing_container = self.docker_client.containers.get(container_name)
                 existing_container.remove(force=True)
                 logger.info(f"删除已存在的容器: {container_name}")
-            except docker.errors.NotFound:
+            except NotFound:
                 pass
             
-            # 运行容器
+            # 端口类型修正为 docker-py 支持的格式
+            ports_fixed = {}
+            for k, v in (ports or {}).items():
+                if isinstance(v, (int, list, tuple)) or v is None:
+                    ports_fixed[k] = v
+                else:
+                    try:
+                        ports_fixed[k] = int(v)
+                    except Exception:
+                        continue
             container = self.docker_client.containers.run(
                 image_name,
                 name=container_name,
-                ports=ports or {},
+                ports=ports_fixed,
                 detach=True,
                 remove=True
             )
@@ -351,10 +361,12 @@ CMD ["npm", "start"]
             return DockerResult(
                 True,
                 f"Docker容器运行成功: {container_name}",
-                container_id=container.id,
+                container_id=str(container.id) if container.id is not None else "",
                 logs=logs
             )
             
+        except NotFound:
+            return DockerResult(False, f"容器不存在: {container_name}")
         except Exception as e:
             logger.error(f"Docker容器运行失败: {e}")
             return DockerResult(False, f"Docker容器运行失败: {str(e)}")
@@ -405,7 +417,7 @@ CMD ["npm", "start"]
             
             return DockerResult(True, f"容器已停止并删除: {container_name}")
             
-        except docker.errors.NotFound:
+        except NotFound:
             return DockerResult(False, f"容器不存在: {container_name}")
         except Exception as e:
             logger.error(f"停止容器失败: {e}")
@@ -437,6 +449,31 @@ CMD ["npm", "start"]
         except Exception as e:
             logger.error(f"列出容器失败: {e}")
             return DockerResult(False, f"列出容器失败: {str(e)}")
+
+    def run_shell_command(self, cmd: str, timeout: int = 60) -> ExecutionResult:
+        """通用 shell 命令执行接口，返回 ExecutionResult"""
+        try:
+            logger.info(f"远程执行命令: {cmd}")
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                cwd=self.workspace_path,
+                timeout=timeout
+            )
+            return ExecutionResult(
+                success=(result.returncode == 0),
+                message="命令执行成功" if result.returncode == 0 else "命令执行失败",
+                output=result.stdout,
+                error=result.stderr,
+                exit_code=result.returncode
+            )
+        except subprocess.TimeoutExpired:
+            return ExecutionResult(False, "命令执行超时", exit_code=124)
+        except Exception as e:
+            logger.error(f"命令执行异常: {e}")
+            return ExecutionResult(False, f"命令执行异常: {str(e)}")
 
 class MCPToolAdapter:
     """MCP工具适配器 - 供CrewAI使用"""
