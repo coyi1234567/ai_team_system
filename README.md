@@ -257,6 +257,14 @@ projects/员工请假小程序/
     ```
   - 如果在项目根目录直接运行 `python -m src.main ...` 会报错，因为此时 `src` 不是包的上级目录。
   - 一定要在 `ai_team_system` 目录下运行 `python src/main.py ...`。
+- **如遇到向量模型下载失败（SSL错误或网络超时）：**
+  - 系统已自动配置HF镜像：`https://hf-mirror.com`
+  - 如果仍有问题，可手动设置环境变量：
+    ```bash
+    export HF_ENDPOINT="https://hf-mirror.com"
+    export HF_HUB_URL="https://hf-mirror.com"
+    ```
+  - 或使用其他国内镜像：`https://huggingface.co.cn`
 
 ---
 

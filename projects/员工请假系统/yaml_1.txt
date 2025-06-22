@@ -1,0 +1,14 @@
+version: '3'
+services:
+  app:
+    image: your-app-image:latest
+    ports:
+      - "80:80"
+    environment:
+      DATABASE_URL: your-database-url
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

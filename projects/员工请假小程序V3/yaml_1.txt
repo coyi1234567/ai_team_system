@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+     kind: Deployment
+     metadata:
+       name: leave-app
+     spec:
+       replicas: 3
+       selector:
+         matchLabels:
+           app: leave-app
+       template:
+         metadata:
+           labels:
+             app: leave-app
+         spec:
+           containers:
+           - name: leave-app
+             image: your-docker-repo/leave-app:latest
+             ports:
+             - containerPort: 80

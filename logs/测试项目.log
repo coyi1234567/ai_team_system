@@ -1,0 +1,16 @@
+[FATAL] "Task" object has no field "prompt"
+Traceback (most recent call last):
+  File "/Users/coyi/Downloads/cursor/ai_team_system/src/main.py", line 86, in run
+    result = AiTeamCrew(project_id=project_id, project_dir=project_dir).kickoff(inputs=inputs)
+  File "/Users/coyi/Downloads/cursor/ai_team_system/src/crew.py", line 568, in kickoff
+    consensus = multi_agent_discussion(
+  File "/Users/coyi/Downloads/cursor/ai_team_system/src/crew.py", line 445, in multi_agent_discussion
+    result = agent.execute_task(Task(name=f"{stage_name}_discussion_round{r+1}_{agent.role}", description=prompt, expected_output="请补充你的观点/建议/问题/确认。", agent=agent), context=context)
+  File "/Users/coyi/Downloads/cursor/ai_team_system/src/crew.py", line 42, in execute_task
+    task.prompt = lambda: task_description
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/pydantic/main.py", line 997, in __setattr__
+    elif (setattr_handler := self._setattr_handler(name, value)) is not None:
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/pydantic/main.py", line 1044, in _setattr_handler
+    raise ValueError(f'"{cls.__name__}" object has no field "{name}"')
+ValueError: "Task" object has no field "prompt"
+

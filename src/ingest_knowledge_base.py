@@ -15,15 +15,33 @@ from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 import pickle
 
+# 配置HF镜像，解决网络访问问题
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+os.environ["HF_HUB_URL"] = "https://hf-mirror.com"
+
 # 配置路径
 BASE_DIR = Path(__file__).parent.parent
 KNOWLEDGE_BASE_DIR = BASE_DIR / "knowledge_base"
 VECTOR_DB_DIR = BASE_DIR / "vector_db"
 VECTOR_DB_DIR.mkdir(exist_ok=True)
 
-# 句向量模型
-EMBED_MODEL = "BAAI/bge-small-zh-v1.5"
-embedder = SentenceTransformer(EMBED_MODEL)
+# 句向量模型 - 使用中文模型，通过HF镜像下载
+EMBED_MODEL = "BAAI/bge-small-zh-v1.5"  # 中文模型，通过镜像下载
+try:
+    embedder = SentenceTransformer(EMBED_MODEL)
+    print(f"✅ 成功加载向量模型: {EMBED_MODEL}")
+except Exception as e:
+    print(f"⚠️ 无法加载向量模型 {EMBED_MODEL}: {e}")
+    print("尝试使用备用模型...")
+    try:
+        # 备用模型
+        EMBED_MODEL = "all-MiniLM-L6-v2"
+        embedder = SentenceTransformer(EMBED_MODEL)
+        print(f"✅ 成功加载备用向量模型: {EMBED_MODEL}")
+    except Exception as e2:
+        print(f"❌ 备用模型也无法加载: {e2}")
+        print("请检查网络连接或手动下载模型")
+        exit(1)
 
 # 初始化Chroma
 chroma_client = chromadb.Client(Settings(

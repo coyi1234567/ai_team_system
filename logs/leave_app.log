@@ -1,0 +1,80 @@
+[FATAL] litellm.APIError: APIError: OpenAIException - 主账户可用余额不足，本次请求需要可用余额大于 0.02 元才能完成，您的可用余额为 -0.0073053125 元(请求预冻结 0.021488625 元)，请充值后再使用
+Traceback (most recent call last):
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/litellm/llms/openai/openai.py", line 725, in completion
+    raise e
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/litellm/llms/openai/openai.py", line 653, in completion
+    ) = self.make_sync_openai_chat_completion_request(
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/litellm/litellm_core_utils/logging_utils.py", line 149, in sync_wrapper
+    result = func(*args, **kwargs)
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/litellm/llms/openai/openai.py", line 471, in make_sync_openai_chat_completion_request
+    raise e
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/litellm/llms/openai/openai.py", line 453, in make_sync_openai_chat_completion_request
+    raw_response = openai_client.chat.completions.with_raw_response.create(
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/openai/_legacy_response.py", line 364, in wrapped
+    return cast(LegacyAPIResponse[R], func(*args, **kwargs))
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/openai/_utils/_utils.py", line 287, in wrapper
+    return func(*args, **kwargs)
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/openai/resources/chat/completions/completions.py", line 925, in create
+    return self._post(
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/openai/_base_client.py", line 1249, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/openai/_base_client.py", line 1037, in request
+    raise self._make_status_error_from_response(err.response) from None
+openai.PermissionDeniedError: Error code: 403 - {'error': {'message': '主账户可用余额不足，本次请求需要可用余额大于 0.02 元才能完成，您的可用余额为 -0.0073053125 元(请求预冻结 0.021488625 元)，请充值后再使用', 'type': 'error'}}
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/litellm/main.py", line 1853, in completion
+    raise e
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/litellm/main.py", line 1826, in completion
+    response = openai_chat_completions.completion(
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/litellm/llms/openai/openai.py", line 736, in completion
+    raise OpenAIError(
+litellm.llms.openai.common_utils.OpenAIError: Error code: 403 - {'error': {'message': '主账户可用余额不足，本次请求需要可用余额大于 0.02 元才能完成，您的可用余额为 -0.0073053125 元(请求预冻结 0.021488625 元)，请充值后再使用', 'type': 'error'}}
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/coyi/Downloads/cursor/ai_team_system/src/main.py", line 81, in run
+    result = AiTeamCrew(project_id=project_id, project_dir=project_dir).kickoff(inputs=inputs)
+  File "/Users/coyi/Downloads/cursor/ai_team_system/src/crew.py", line 602, in kickoff
+    consensus = multi_agent_discussion(
+  File "/Users/coyi/Downloads/cursor/ai_team_system/src/crew.py", line 422, in multi_agent_discussion
+    result = agent.execute_task(Task(name=f"{stage_name}_discussion_round{r+1}_{agent.role}", description=prompt, expected_output="请补充你的观点/建议/问题/确认。", agent=agent), context=context)
+  File "/Users/coyi/Downloads/cursor/ai_team_system/src/crew.py", line 33, in execute_task
+    result = super().execute_task(task, context, tools)
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/crewai/agent.py", line 435, in execute_task
+    raise e
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/crewai/agent.py", line 411, in execute_task
+    result = self._execute_without_timeout(task_prompt, task)
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/crewai/agent.py", line 507, in _execute_without_timeout
+    return self.agent_executor.invoke(
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/crewai/agents/crew_agent_executor.py", line 121, in invoke
+    raise e
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/crewai/agents/crew_agent_executor.py", line 110, in invoke
+    formatted_answer = self._invoke_loop()
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/crewai/agents/crew_agent_executor.py", line 206, in _invoke_loop
+    raise e
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/crewai/agents/crew_agent_executor.py", line 153, in _invoke_loop
+    answer = get_llm_response(
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/crewai/utilities/agent_utils.py", line 160, in get_llm_response
+    raise e
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/crewai/utilities/agent_utils.py", line 151, in get_llm_response
+    answer = llm.call(
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/crewai/llm.py", line 956, in call
+    return self._handle_non_streaming_response(
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/crewai/llm.py", line 768, in _handle_non_streaming_response
+    response = litellm.completion(**params)
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/litellm/utils.py", line 1283, in wrapper
+    raise e
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/litellm/utils.py", line 1161, in wrapper
+    result = original_function(*args, **kwargs)
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/litellm/main.py", line 3241, in completion
+    raise exception_type(
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/litellm/litellm_core_utils/exception_mapping_utils.py", line 2239, in exception_type
+    raise e
+  File "/Users/coyi/miniforge3/envs/ai_team_env/lib/python3.10/site-packages/litellm/litellm_core_utils/exception_mapping_utils.py", line 474, in exception_type
+    raise APIError(
+litellm.exceptions.APIError: litellm.APIError: APIError: OpenAIException - 主账户可用余额不足，本次请求需要可用余额大于 0.02 元才能完成，您的可用余额为 -0.0073053125 元(请求预冻结 0.021488625 元)，请充值后再使用
+
