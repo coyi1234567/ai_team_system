@@ -436,7 +436,6 @@ def multi_agent_discussion(stage_name: str, agents: List[Agent], initial_input: 
 
 class AiTeamCrew:
     def __init__(self, project_id=None, project_dir=None):
-        # 注入project_id和产出目录到所有Agent，强制转为str，保证类型安全
         pid = str(project_id) if project_id is not None else ""
         pdir = str(project_dir) if project_dir is not None else ""
         for agent in AGENTS.values():
@@ -445,12 +444,11 @@ class AiTeamCrew:
         self.crew = Crew(agents=list(AGENTS.values()), tasks=TASKS)
 
     def kickoff(self, inputs):
-        # 多Agent上下文链路自动传递 + 多角色多轮对话
         context = dict(inputs) if inputs else {}
         results = {}
-        # 1. 需求分析阶段：老板-产品经理-技术总监多轮对话，产品经理汇总
         project_dir = AGENTS["product_manager"]._project_dir
         initial_input = f"项目需求：{inputs.get('requirements', '')}"
+        # 1. 需求分析阶段：老板-产品经理-技术总监多轮对话
         consensus = multi_agent_discussion(
             stage_name="需求分析",
             agents=[AGENTS["boss"], AGENTS["product_manager"], AGENTS["tech_lead"]],
@@ -460,33 +458,67 @@ class AiTeamCrew:
         )
         results["requirement_analysis"] = consensus
         context["requirement_analysis_result"] = consensus
-        # 2. 其余阶段串行+上下文传递（可后续扩展为多角色对话）
-        for task in TASKS:
-            if task.name == "requirement_analysis":
-                continue  # 已在上面处理
-            if task.name == "technical_design" and "requirement_analysis" in results:
-                context["requirement_analysis_result"] = results["requirement_analysis"]
-            if task.name == "ui_design" and "technical_design" in results:
-                context["technical_design_result"] = results["technical_design"]
-            if task.name == "frontend_development" and "ui_design" in results:
-                context["ui_design_result"] = results["ui_design"]
-            if task.name == "backend_development" and "technical_design" in results:
-                context["technical_design_result"] = results["technical_design"]
-            if task.name == "testing":
-                if "frontend_development" in results:
-                    context["frontend_development_result"] = results["frontend_development"]
-                if "backend_development" in results:
-                    context["backend_development_result"] = results["backend_development"]
-            if task.name == "deployment" and "testing" in results:
-                context["testing_result"] = results["testing"]
-            if task.name == "acceptance":
-                for key in ["requirement_analysis","technical_design","ui_design","frontend_development","backend_development","testing","deployment"]:
-                    if key in results:
-                        context[f"{key}_result"] = results[key]
-            agent = task.agent
-            if agent is None:
-                continue
+        # 2. 技术设计阶段：技术总监-产品经理-前端-后端多轮对话
+        consensus = multi_agent_discussion(
+            stage_name="技术设计",
+            agents=[AGENTS["tech_lead"], AGENTS["product_manager"], AGENTS["frontend_dev"], AGENTS["backend_dev"]],
+            initial_input=context["requirement_analysis_result"],
+            project_dir=project_dir,
+            rounds=3
+        )
+        results["technical_design"] = consensus
+        context["technical_design_result"] = consensus
+        # 3. UI设计阶段（单Agent串行）
+        task = next(t for t in TASKS if t.name == "ui_design")
+        agent = task.agent
+        if agent is not None:
             context_str = str(context) if context else None
             result = agent.execute_task(task, context=context_str, tools=task.tools)
-            results[task.name] = result
+            results["ui_design"] = result
+            context["ui_design_result"] = result
+        # 4. 前端开发阶段：前端-UI设计-技术总监多轮对话
+        consensus = multi_agent_discussion(
+            stage_name="前端开发",
+            agents=[AGENTS["frontend_dev"], AGENTS["ui_designer"], AGENTS["tech_lead"]],
+            initial_input=context["ui_design_result"],
+            project_dir=project_dir,
+            rounds=2
+        )
+        results["frontend_development"] = consensus
+        context["frontend_development_result"] = consensus
+        # 5. 后端开发阶段：后端-技术总监-产品经理多轮对话
+        consensus = multi_agent_discussion(
+            stage_name="后端开发",
+            agents=[AGENTS["backend_dev"], AGENTS["tech_lead"], AGENTS["product_manager"]],
+            initial_input=context["technical_design_result"],
+            project_dir=project_dir,
+            rounds=2
+        )
+        results["backend_development"] = consensus
+        context["backend_development_result"] = consensus
+        # 6. 数据分析、测试、部署、文档阶段（单Agent串行）
+        for name in ["data_analysis", "testing", "deployment", "documentation"]:
+            task = next(t for t in TASKS if t.name == name)
+            agent = task.agent
+            if agent is not None:
+                context_str = str(context) if context else None
+                result = agent.execute_task(task, context=context_str, tools=task.tools)
+                results[name] = result
+                context[f"{name}_result"] = result
+        # 7. 验收阶段：老板-产品经理-测试-开发多轮对话
+        consensus = multi_agent_discussion(
+            stage_name="验收",
+            agents=[AGENTS["boss"], AGENTS["product_manager"], AGENTS["qa_engineer"], AGENTS["frontend_dev"], AGENTS["backend_dev"]],
+            initial_input="\n".join([
+                context.get("requirement_analysis_result", ""),
+                context.get("technical_design_result", ""),
+                context.get("frontend_development_result", ""),
+                context.get("backend_development_result", ""),
+                context.get("testing_result", "")
+            ]),
+            project_dir=project_dir,
+            rounds=2
+        )
+        results["acceptance"] = consensus
+        context["acceptance_result"] = consensus
         return results 
