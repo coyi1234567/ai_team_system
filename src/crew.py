@@ -5,6 +5,7 @@ from crewai import Crew, Agent, Task
 from .crew_tools import MCPTool
 from pydantic import PrivateAttr
 from typing import Optional, cast, List
+import subprocess
 
 class LoggingAgent(Agent):
     _project_id: 'str' = PrivateAttr(default="")
@@ -434,6 +435,21 @@ def multi_agent_discussion(stage_name: str, agents: List[Agent], initial_input: 
             f.write(consensus.strip() + '\n')
     return consensus
 
+def run_command_with_log(cmd, cwd, log_path):
+    """在指定目录下执行命令，捕获stdout/stderr并写入日志，返回(exitcode, stdout, stderr)"""
+    with open(log_path, 'a', encoding='utf-8') as f:
+        f.write(f"\n[CMD] {cmd}\n")
+        try:
+            proc = subprocess.Popen(cmd, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            out, err = proc.communicate()
+            out = out.decode(errors='ignore')
+            err = err.decode(errors='ignore')
+            f.write(f"[STDOUT]\n{out}\n[STDERR]\n{err}\n[EXITCODE] {proc.returncode}\n")
+            return proc.returncode, out, err
+        except Exception as e:
+            f.write(f"[EXCEPTION] {e}\n")
+            return -1, '', str(e)
+
 class AiTeamCrew:
     def __init__(self, project_id=None, project_dir=None):
         pid = str(project_id) if project_id is not None else ""
@@ -442,6 +458,28 @@ class AiTeamCrew:
             agent._project_id = pid
             agent._project_dir = pdir
         self.crew = Crew(agents=list(AGENTS.values()), tasks=TASKS)
+
+    def auto_execute_and_fix(self, project_dir, file_to_run, agent, max_retry=3, run_type='python'):
+        """
+        自动执行产出文件，捕获日志，失败时自动修正并重试。
+        run_type: 'python' 或 'docker'
+        """
+        log_path = os.path.join(project_dir, 'auto_exec_log.txt')
+        for attempt in range(1, max_retry+1):
+            if run_type == 'python':
+                cmd = f'python {file_to_run}'
+            elif run_type == 'docker':
+                cmd = f'docker build -t tempimg . && docker run --rm tempimg'
+            else:
+                return False
+            exitcode, out, err = run_command_with_log(cmd, project_dir, log_path)
+            if exitcode == 0:
+                return True
+            # 失败时，将日志作为Agent输入，自动修正
+            fix_prompt = f"上次自动执行命令失败，日志如下：\nSTDOUT:\n{out}\nSTDERR:\n{err}\n请修正你的产出，确保下次执行通过。"
+            fix_task = Task(name="auto_fix", description=fix_prompt, expected_output="请修正产出代码/配置。", agent=agent)
+            agent.execute_task(fix_task, context=fix_prompt, tools=agent.tools)
+        return False
 
     def kickoff(self, inputs):
         context = dict(inputs) if inputs else {}
@@ -521,4 +559,13 @@ class AiTeamCrew:
         )
         results["acceptance"] = consensus
         context["acceptance_result"] = consensus
+        # 8. 自动执行与修正闭环（以main.py和Dockerfile为例）
+        # 自动执行main.py
+        main_py = os.path.join(project_dir, 'main.py')
+        if os.path.exists(main_py):
+            self.auto_execute_and_fix(project_dir, 'main.py', AGENTS["backend_dev"], max_retry=3, run_type='python')
+        # 自动构建并运行Dockerfile
+        dockerfile = os.path.join(project_dir, 'Dockerfile')
+        if os.path.exists(dockerfile):
+            self.auto_execute_and_fix(project_dir, '', AGENTS["devops_engineer"], max_retry=2, run_type='docker')
         return results 
