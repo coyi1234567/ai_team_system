@@ -1,5 +1,5 @@
 import typer
-from .crew import AiTeamCrew
+from .crew_core import AiTeamCrew
 import traceback
 import sys
 import os
@@ -26,13 +26,8 @@ def get_project_id(project_name):
     return project_name.strip().replace(' ', '_')
 
 def archive_and_clean(project_id, project_name):
-    # 归档并清理产出目录
-    project_dir = os.path.join(PROJECTS_ROOT, project_id)
-    if os.path.exists(project_dir):
-        os.makedirs(ARCHIVE_ROOT, exist_ok=True)
-        archive_dir = os.path.join(ARCHIVE_ROOT, f"{project_id}_{int(time.time())}")
-        shutil.move(project_dir, archive_dir)
-        print(f"[AI团队] 已归档旧产出到: {archive_dir}")
+    # 暂时禁用归档功能
+    print(f"[AI团队] 跳过归档，直接使用现有目录")
     # 清理日志
     log_file = os.path.join(LOGS_ROOT, f"{project_id}.log")
     if os.path.exists(log_file):

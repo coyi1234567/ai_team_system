@@ -1,9 +1,9 @@
 import os
 from typing import List, Optional
 from crewai import Crew, Task, Agent
-from agents import LoggingAgent
-from tools.mcp_tool import MCPTool
-from utils.log_utils import extract_error_summary, run_command_with_log
+from .agents.logging_agent import LoggingAgent
+from .tools.mcp_tool import MCPTool
+from .utils.log_utils import extract_error_summary, run_command_with_log
 from mcp_server import MCPServer
 
 class AiTeamCrew:

@@ -51,7 +51,7 @@ class MCPServer:
     
     def __init__(self, workspace_path: Optional[str] = None):
         self.workspace_path = Path(workspace_path) if workspace_path else Path.cwd()
-        self.allowed_extensions = {'.py', '.js', '.ts', '.html', '.css', '.json', '.md', '.txt', '.yaml', '.yml', '.sh'}
+        self.allowed_extensions = {'.py', '.js', '.ts', '.html', '.css', '.json', '.md', '.txt', '.yaml', '.yml', '.sh', ''}  # 空字符串支持无扩展名文件如Dockerfile
         self.max_file_size = 1024 * 1024  # 1MB
         self.docker_client = None
         self._init_docker()
@@ -249,10 +249,10 @@ console.log("Hello, World!");
 
 WORKDIR /app
 
-COPY {project_path}/requirements.txt .
+COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY {project_path}/ .
+COPY . .
 
 EXPOSE 8000
 
@@ -263,10 +263,10 @@ CMD ["python", "main.py"]
 
 WORKDIR /app
 
-COPY {project_path}/package*.json ./
+COPY package*.json ./
 RUN npm install
 
-COPY {project_path}/ .
+COPY . .
 
 EXPOSE 3000
 
