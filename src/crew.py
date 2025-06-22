@@ -1,13 +1,24 @@
 import os
 import sys
 import datetime
-from crewai import Crew, Agent, Task
-from .crew_tools import MCPTool
-from pydantic import PrivateAttr
-from typing import Optional, cast, List
-import subprocess
-from mcp_server import MCPServer
+import time
+import json
+import traceback
 import re
+import subprocess
+from typing import List, Dict, Any, Optional
+from pathlib import Path
+from pydantic import PrivateAttr
+from crewai import Agent, Task, Crew
+from crewai.tools import BaseTool
+from litellm import completion
+
+# 添加项目根目录到Python路径
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from .tools.mcp_tool import MCPTool
+from mcp_server import MCPServer
 
 class LoggingAgent(Agent):
     _project_id: 'str' = PrivateAttr(default="")
@@ -559,137 +570,324 @@ class AiTeamCrew:
                 agent.execute_task(fix_task, context=fix_prompt, tools=agent.tools)
         return False
 
-    def kickoff(self, inputs):
+    def kickoff(self, inputs, resume_from: Optional[str] = None):
+        """
+        启动AI团队协作流程
+        inputs: 项目输入参数
+        resume_from: 从指定阶段继续执行（可选）
+        """
         context = dict(inputs) if inputs else {}
         results = {}
         project_dir = AGENTS["product_manager"]._project_dir
+        
+        # 初始化进度管理器
+        progress_manager = ProgressManager(project_dir)
+        
+        # 如果指定了恢复点，检查进度
+        if resume_from:
+            print(f"[AI团队] 从阶段 '{resume_from}' 继续执行...")
+            # 加载已完成阶段的结果到context
+            for stage in progress_manager.stages:
+                if progress_manager.is_stage_completed(stage):
+                    result = progress_manager.get_stage_result(stage)
+                    results[stage] = result
+                    context[f"{stage}_result"] = result
+                    if stage == resume_from:
+                        break
+        
         initial_input = f"项目需求：{inputs.get('requirements', '')}"
+        
         # 1. 需求分析阶段：老板-产品经理-技术总监多轮对话
-        consensus = multi_agent_discussion(
-            stage_name="需求分析",
-            agents=[AGENTS["boss"], AGENTS["product_manager"], AGENTS["tech_lead"]],
-            initial_input=initial_input,
-            project_dir=project_dir,
-            rounds=3
-        )
-        results["requirement_analysis"] = consensus
-        context["requirement_analysis_result"] = consensus
+        if not progress_manager.is_stage_completed("requirement_analysis"):
+            print("[AI团队] 开始需求分析阶段...")
+            consensus = multi_agent_discussion(
+                stage_name="需求分析",
+                agents=[AGENTS["boss"], AGENTS["product_manager"], AGENTS["tech_lead"]],
+                initial_input=initial_input,
+                project_dir=project_dir,
+                rounds=3
+            )
+            results["requirement_analysis"] = consensus
+            context["requirement_analysis_result"] = consensus
+            progress_manager.save_progress("requirement_analysis", consensus, context)
+        else:
+            print("[AI团队] 需求分析阶段已完成，跳过...")
+            results["requirement_analysis"] = progress_manager.get_stage_result("requirement_analysis")
+            context["requirement_analysis_result"] = results["requirement_analysis"]
+        
         # 2. 技术设计阶段：技术总监-产品经理-前端-后端多轮对话
-        consensus = multi_agent_discussion(
-            stage_name="技术设计",
-            agents=[AGENTS["tech_lead"], AGENTS["product_manager"], AGENTS["frontend_dev"], AGENTS["backend_dev"]],
-            initial_input=context["requirement_analysis_result"],
-            project_dir=project_dir,
-            rounds=3
-        )
-        results["technical_design"] = consensus
-        context["technical_design_result"] = consensus
+        if not progress_manager.is_stage_completed("technical_design"):
+            print("[AI团队] 开始技术设计阶段...")
+            consensus = multi_agent_discussion(
+                stage_name="技术设计",
+                agents=[AGENTS["tech_lead"], AGENTS["product_manager"], AGENTS["frontend_dev"], AGENTS["backend_dev"]],
+                initial_input=context["requirement_analysis_result"],
+                project_dir=project_dir,
+                rounds=3
+            )
+            results["technical_design"] = consensus
+            context["technical_design_result"] = consensus
+            progress_manager.save_progress("technical_design", consensus, context)
+        else:
+            print("[AI团队] 技术设计阶段已完成，跳过...")
+            results["technical_design"] = progress_manager.get_stage_result("technical_design")
+            context["technical_design_result"] = results["technical_design"]
+        
         # 3. UI设计阶段（单Agent串行）
-        task = next(t for t in TASKS if t.name == "ui_design")
-        agent = task.agent
-        if agent is not None:
-            context_str = str(context) if context else None
-            result = agent.execute_task(task, context=context_str, tools=task.tools)
-            results["ui_design"] = result
-            context["ui_design_result"] = result
-        # 4. 前端开发阶段：前端-UI设计-技术总监多轮对话
-        consensus = multi_agent_discussion(
-            stage_name="前端开发",
-            agents=[AGENTS["frontend_dev"], AGENTS["ui_designer"], AGENTS["tech_lead"]],
-            initial_input=context["ui_design_result"],
-            project_dir=project_dir,
-            rounds=2
-        )
-        results["frontend_development"] = consensus
-        context["frontend_development_result"] = consensus
-        
-        # 4.1 前端代码生成阶段（单Agent执行）
-        task = next(t for t in TASKS if t.name == "frontend_development")
-        agent = task.agent
-        if agent is not None:
-            context_str = str(context) if context else None
-            result = agent.execute_task(task, context=context_str, tools=task.tools)
-            results["frontend_code"] = result
-            context["frontend_code_result"] = result
-        
-        # 5. 后端开发阶段：后端-技术总监-产品经理多轮对话
-        consensus = multi_agent_discussion(
-            stage_name="后端开发",
-            agents=[AGENTS["backend_dev"], AGENTS["tech_lead"], AGENTS["product_manager"]],
-            initial_input=context["technical_design_result"],
-            project_dir=project_dir,
-            rounds=2
-        )
-        results["backend_development"] = consensus
-        context["backend_development_result"] = consensus
-        
-        # 5.1 后端代码生成阶段（单Agent执行）
-        task = next(t for t in TASKS if t.name == "backend_development")
-        agent = task.agent
-        if agent is not None:
-            context_str = str(context) if context else None
-            result = agent.execute_task(task, context=context_str, tools=task.tools)
-            results["backend_code"] = result
-            context["backend_code_result"] = result
-        # 6. 数据分析、测试、部署、文档阶段（单Agent串行）
-        for name in ["data_analysis", "testing", "deployment", "documentation"]:
-            task = next(t for t in TASKS if t.name == name)
+        if not progress_manager.is_stage_completed("ui_design"):
+            print("[AI团队] 开始UI设计阶段...")
+            task = next(t for t in TASKS if t.name == "ui_design")
             agent = task.agent
             if agent is not None:
                 context_str = str(context) if context else None
                 result = agent.execute_task(task, context=context_str, tools=task.tools)
-                results[name] = result
-                context[f"{name}_result"] = result
+                results["ui_design"] = result
+                context["ui_design_result"] = result
+                progress_manager.save_progress("ui_design", result, context)
+        else:
+            print("[AI团队] UI设计阶段已完成，跳过...")
+            results["ui_design"] = progress_manager.get_stage_result("ui_design")
+            context["ui_design_result"] = results["ui_design"]
+        
+        # 4. 前端开发阶段：前端-UI设计-技术总监多轮对话
+        if not progress_manager.is_stage_completed("frontend_development"):
+            print("[AI团队] 开始前端开发讨论阶段...")
+            consensus = multi_agent_discussion(
+                stage_name="前端开发",
+                agents=[AGENTS["frontend_dev"], AGENTS["ui_designer"], AGENTS["tech_lead"]],
+                initial_input=context["ui_design_result"],
+                project_dir=project_dir,
+                rounds=2
+            )
+            results["frontend_development"] = consensus
+            context["frontend_development_result"] = consensus
+            progress_manager.save_progress("frontend_development", consensus, context)
+        else:
+            print("[AI团队] 前端开发讨论阶段已完成，跳过...")
+            results["frontend_development"] = progress_manager.get_stage_result("frontend_development")
+            context["frontend_development_result"] = results["frontend_development"]
+        
+        # 4.1 前端代码生成阶段（单Agent执行）
+        if not progress_manager.is_stage_completed("frontend_code"):
+            print("[AI团队] 开始前端代码生成阶段...")
+            task = next(t for t in TASKS if t.name == "frontend_development")
+            agent = task.agent
+            if agent is not None:
+                context_str = str(context) if context else None
+                result = agent.execute_task(task, context=context_str, tools=task.tools)
+                results["frontend_code"] = result
+                context["frontend_code_result"] = result
+                progress_manager.save_progress("frontend_code", result, context)
+        else:
+            print("[AI团队] 前端代码生成阶段已完成，跳过...")
+            results["frontend_code"] = progress_manager.get_stage_result("frontend_code")
+            context["frontend_code_result"] = results["frontend_code"]
+        
+        # 5. 后端开发阶段：后端-技术总监-产品经理多轮对话
+        if not progress_manager.is_stage_completed("backend_development"):
+            print("[AI团队] 开始后端开发讨论阶段...")
+            consensus = multi_agent_discussion(
+                stage_name="后端开发",
+                agents=[AGENTS["backend_dev"], AGENTS["tech_lead"], AGENTS["product_manager"]],
+                initial_input=context["technical_design_result"],
+                project_dir=project_dir,
+                rounds=2
+            )
+            results["backend_development"] = consensus
+            context["backend_development_result"] = consensus
+            progress_manager.save_progress("backend_development", consensus, context)
+        else:
+            print("[AI团队] 后端开发讨论阶段已完成，跳过...")
+            results["backend_development"] = progress_manager.get_stage_result("backend_development")
+            context["backend_development_result"] = results["backend_development"]
+        
+        # 5.1 后端代码生成阶段（单Agent执行）
+        if not progress_manager.is_stage_completed("backend_code"):
+            print("[AI团队] 开始后端代码生成阶段...")
+            task = next(t for t in TASKS if t.name == "backend_development")
+            agent = task.agent
+            if agent is not None:
+                context_str = str(context) if context else None
+                result = agent.execute_task(task, context=context_str, tools=task.tools)
+                results["backend_code"] = result
+                context["backend_code_result"] = result
+                progress_manager.save_progress("backend_code", result, context)
+        else:
+            print("[AI团队] 后端代码生成阶段已完成，跳过...")
+            results["backend_code"] = progress_manager.get_stage_result("backend_code")
+            context["backend_code_result"] = results["backend_code"]
+        
+        # 6. 数据分析、测试、部署、文档阶段（单Agent串行）
+        for name in ["data_analysis", "testing", "deployment", "documentation"]:
+            if not progress_manager.is_stage_completed(name):
+                print(f"[AI团队] 开始{name}阶段...")
+                task = next(t for t in TASKS if t.name == name)
+                agent = task.agent
+                if agent is not None:
+                    context_str = str(context) if context else None
+                    result = agent.execute_task(task, context=context_str, tools=task.tools)
+                    results[name] = result
+                    context[f"{name}_result"] = result
+                    progress_manager.save_progress(name, result, context)
+            else:
+                print(f"[AI团队] {name}阶段已完成，跳过...")
+                results[name] = progress_manager.get_stage_result(name)
+                context[f"{name}_result"] = results[name]
+        
         # 7. 验收阶段：老板-产品经理-测试-开发多轮对话
-        consensus = multi_agent_discussion(
-            stage_name="验收",
-            agents=[AGENTS["boss"], AGENTS["product_manager"], AGENTS["qa_engineer"], AGENTS["frontend_dev"], AGENTS["backend_dev"]],
-            initial_input="\n".join([
-                context.get("requirement_analysis_result", ""),
-                context.get("technical_design_result", ""),
-                context.get("frontend_development_result", ""),
-                context.get("backend_development_result", ""),
-                context.get("testing_result", "")
-            ]),
-            project_dir=project_dir,
-            rounds=2
-        )
-        results["acceptance"] = consensus
-        context["acceptance_result"] = consensus
+        if not progress_manager.is_stage_completed("acceptance"):
+            print("[AI团队] 开始验收阶段...")
+            consensus = multi_agent_discussion(
+                stage_name="验收",
+                agents=[AGENTS["boss"], AGENTS["product_manager"], AGENTS["qa_engineer"], AGENTS["frontend_dev"], AGENTS["backend_dev"]],
+                initial_input="\n".join([
+                    context.get("requirement_analysis_result", ""),
+                    context.get("technical_design_result", ""),
+                    context.get("frontend_development_result", ""),
+                    context.get("backend_development_result", ""),
+                    context.get("testing_result", "")
+                ]),
+                project_dir=project_dir,
+                rounds=2
+            )
+            results["acceptance"] = consensus
+            context["acceptance_result"] = consensus
+            progress_manager.save_progress("acceptance", consensus, context)
+        else:
+            print("[AI团队] 验收阶段已完成，跳过...")
+            results["acceptance"] = progress_manager.get_stage_result("acceptance")
+            context["acceptance_result"] = results["acceptance"]
+        
         # 8. 自动执行与修正闭环（多类型、多Agent、多环境）
-        # 1) main.py
-        main_py = os.path.join(project_dir, 'main.py')
-        if os.path.exists(main_py):
-            self.auto_execute_and_fix(
-                project_dir, 'main.py',
-                agent_list=[AGENTS["backend_dev"], AGENTS["qa_engineer"]],
-                run_type='python', use_mcp=True, max_retry=3)
-        # 2) shell脚本
-        shell_file = os.path.join(project_dir, 'deploy.sh')
-        if os.path.exists(shell_file):
-            self.auto_execute_and_fix(
-                project_dir, 'deploy.sh',
-                agent_list=[AGENTS["devops_engineer"]],
-                run_type='shell', use_mcp=True, max_retry=2)
-        # 3) npm前端
-        frontend_dir = os.path.join(project_dir, 'frontend')
-        if os.path.exists(frontend_dir):
-            self.auto_execute_and_fix(
-                frontend_dir, 'build',
-                agent_list=[AGENTS["frontend_dev"], AGENTS["qa_engineer"]],
-                run_type='npm', use_mcp=True, max_retry=2)
-        # 4) pytest自动化测试
-        test_file = os.path.join(project_dir, 'tests')
-        if os.path.exists(test_file):
-            self.auto_execute_and_fix(
-                project_dir, '',
-                agent_list=[AGENTS["qa_engineer"], AGENTS["backend_dev"]],
-                run_type='pytest', use_mcp=True, max_retry=2)
-        # 5) Dockerfile
-        dockerfile = os.path.join(project_dir, 'Dockerfile')
-        if os.path.exists(dockerfile):
-            self.auto_execute_and_fix(
-                project_dir, '',
-                agent_list=[AGENTS["devops_engineer"], AGENTS["backend_dev"]],
-                run_type='docker', use_mcp=True, max_retry=2)
-        return results 
+        if not progress_manager.is_stage_completed("auto_execution"):
+            print("[AI团队] 开始自动执行与修正阶段...")
+            # 1) main.py
+            main_py = os.path.join(project_dir, 'main.py')
+            if os.path.exists(main_py):
+                self.auto_execute_and_fix(
+                    project_dir, 'main.py',
+                    agent_list=[AGENTS["backend_dev"], AGENTS["qa_engineer"]],
+                    run_type='python', use_mcp=True, max_retry=3)
+            # 2) shell脚本
+            shell_file = os.path.join(project_dir, 'deploy.sh')
+            if os.path.exists(shell_file):
+                self.auto_execute_and_fix(
+                    project_dir, 'deploy.sh',
+                    agent_list=[AGENTS["devops_engineer"]],
+                    run_type='shell', use_mcp=True, max_retry=2)
+            # 3) npm前端
+            frontend_dir = os.path.join(project_dir, 'frontend')
+            if os.path.exists(frontend_dir):
+                self.auto_execute_and_fix(
+                    frontend_dir, 'build',
+                    agent_list=[AGENTS["frontend_dev"], AGENTS["qa_engineer"]],
+                    run_type='npm', use_mcp=True, max_retry=2)
+            # 4) pytest自动化测试
+            test_file = os.path.join(project_dir, 'tests')
+            if os.path.exists(test_file):
+                self.auto_execute_and_fix(
+                    project_dir, '',
+                    agent_list=[AGENTS["qa_engineer"], AGENTS["backend_dev"]],
+                    run_type='pytest', use_mcp=True, max_retry=2)
+            # 5) Dockerfile
+            dockerfile = os.path.join(project_dir, 'Dockerfile')
+            if os.path.exists(dockerfile):
+                self.auto_execute_and_fix(
+                    project_dir, '',
+                    agent_list=[AGENTS["devops_engineer"], AGENTS["backend_dev"]],
+                    run_type='docker', use_mcp=True, max_retry=2)
+            progress_manager.save_progress("auto_execution", "自动执行完成", context)
+        else:
+            print("[AI团队] 自动执行与修正阶段已完成，跳过...")
+        
+        # 打印进度摘要
+        summary = progress_manager.get_progress_summary()
+        print(f"[AI团队] 项目执行完成！进度：{summary['completed']}/{summary['total']} ({summary['percentage']}%)")
+        
+        return results
+
+# 进度状态管理
+class ProgressManager:
+    def __init__(self, project_dir: str):
+        self.project_dir = project_dir
+        self.progress_file = os.path.join(project_dir, 'progress.json')
+        self.stages = [
+            "requirement_analysis",
+            "technical_design", 
+            "ui_design",
+            "frontend_development",
+            "frontend_code",
+            "backend_development",
+            "backend_code",
+            "data_analysis",
+            "testing",
+            "deployment",
+            "documentation",
+            "acceptance",
+            "auto_execution"
+        ]
+    
+    def save_progress(self, stage: str, result: str, context: Dict = None):
+        """保存阶段进度"""
+        progress = self.load_progress()
+        progress[stage] = {
+            "status": "completed",
+            "result": result,
+            "timestamp": time.time(),
+            "context": context or {}
+        }
+        with open(self.progress_file, 'w', encoding='utf-8') as f:
+            json.dump(progress, f, ensure_ascii=False, indent=2)
+    
+    def load_progress(self) -> Dict:
+        """加载进度状态"""
+        if os.path.exists(self.progress_file):
+            try:
+                with open(self.progress_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except:
+                pass
+        return {}
+    
+    def get_completed_stages(self) -> List[str]:
+        """获取已完成的阶段"""
+        progress = self.load_progress()
+        return [stage for stage, data in progress.items() if data.get("status") == "completed"]
+    
+    def get_next_stage(self) -> str:
+        """获取下一个待执行的阶段"""
+        completed = self.get_completed_stages()
+        for stage in self.stages:
+            if stage not in completed:
+                return stage
+        return None
+    
+    def is_stage_completed(self, stage: str) -> bool:
+        """检查阶段是否已完成"""
+        progress = self.load_progress()
+        return stage in progress and progress[stage].get("status") == "completed"
+    
+    def get_stage_result(self, stage: str) -> str:
+        """获取阶段结果"""
+        progress = self.load_progress()
+        if stage in progress:
+            return progress[stage].get("result", "")
+        return ""
+    
+    def reset_progress(self):
+        """重置进度"""
+        if os.path.exists(self.progress_file):
+            os.remove(self.progress_file)
+    
+    def get_progress_summary(self) -> Dict:
+        """获取进度摘要"""
+        progress = self.load_progress()
+        completed = len([s for s in progress.values() if s.get("status") == "completed"])
+        total = len(self.stages)
+        return {
+            "completed": completed,
+            "total": total,
+            "percentage": round(completed / total * 100, 1) if total > 0 else 0,
+            "completed_stages": self.get_completed_stages(),
+            "next_stage": self.get_next_stage()
+        } 
