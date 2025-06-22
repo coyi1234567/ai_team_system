@@ -1,13 +1,60 @@
 import os
+import sys
+import datetime
 from crewai import Crew, Agent, Task
 from .crew_tools import MCPTool
 
+class LoggingAgent(Agent):
+    def __init__(self, *args, project_id=None, project_dir=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.project_id = project_id
+        self.project_dir = project_dir
+
+    def execute_task(self, task, context=None, tools=None):
+        task_prompt = task.prompt()
+        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        role = self.role
+        task_name = getattr(task, 'name', 'unknown')
+        # 控制台打印输入
+        print(f"\n================ LLM调用日志 ================")
+        print(f"[{now}] 角色: {role} 任务: {task_name}")
+        print(f"【输入Prompt】\n{task_prompt}")
+        if context:
+            print(f"【上下文】\n{context}")
+        sys.stdout.flush()
+        # 调用原始Agent逻辑
+        result = super().execute_task(task, context, tools)
+        # 控制台打印输出
+        print(f"【输出Result】\n{result}")
+        print(f"============================================\n")
+        sys.stdout.flush()
+        # 日志落盘
+        if self.project_dir:
+            log_path = os.path.join(self.project_dir, 'llm_log.txt')
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(f"[{now}] 角色: {role} 任务: {task_name}\n")
+                f.write(f"【输入Prompt】\n{task_prompt}\n")
+                if context:
+                    f.write(f"【上下文】\n{context}\n")
+                f.write(f"【输出Result】\n{result}\n")
+                f.write(f"--------------------------------------------\n")
+        return result
+
 # 角色定义 - 优化提示词，增加更多专业角色
 AGENTS = {
-    "boss": Agent(
-        role="项目总监",
-        goal="负责项目整体把控、资源协调、风险管理和最终验收，确保项目按时高质量交付",
-        backstory="""你是张总，一位经验丰富的项目总监，拥有15年以上的项目管理经验。
+    k: LoggingAgent(
+        role=v.role,
+        goal=v.goal,
+        backstory=v.backstory,
+        llm=v.llm,
+        tools=v.tools,
+        project_id=None,  # 由AiTeamCrew注入
+        project_dir=None  # 由AiTeamCrew注入
+    ) for k, v in {
+        "boss": Agent(
+            role="项目总监",
+            goal="负责项目整体把控、资源协调、风险管理和最终验收，确保项目按时高质量交付",
+            backstory="""你是张总，一位经验丰富的项目总监，拥有15年以上的项目管理经验。
 你擅长：
 - 项目整体规划和资源调配
 - 跨部门协调和沟通
@@ -17,14 +64,14 @@ AGENTS = {
 
 你的工作风格严谨、果断，注重结果导向，善于在复杂项目中做出关键决策。
 你总是从商业价值和用户体验的角度来评估项目成果。""",
-        llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        tools=[MCPTool()]
-    ),
-    
-    "product_manager": Agent(
-        role="产品经理",
-        goal="深入分析用户需求，设计产品功能，制定产品路线图，确保产品满足用户期望和商业目标",
-        backstory="""你是李产品，一位资深产品经理，拥有8年产品设计和用户研究经验。
+            llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            tools=[MCPTool()]
+        ),
+        
+        "product_manager": Agent(
+            role="产品经理",
+            goal="深入分析用户需求，设计产品功能，制定产品路线图，确保产品满足用户期望和商业目标",
+            backstory="""你是李产品，一位资深产品经理，拥有8年产品设计和用户研究经验。
 你擅长：
 - 用户调研和需求挖掘
 - 产品功能设计和用户体验优化
@@ -34,14 +81,14 @@ AGENTS = {
 
 你的工作风格细致、用户导向，善于从用户角度思考问题。
 你总是追求产品的易用性和商业价值的平衡。""",
-        llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        tools=[MCPTool()]
-    ),
-    
-    "tech_lead": Agent(
-        role="技术总监",
-        goal="设计系统架构，制定技术方案，确保技术选型的合理性和系统的可扩展性",
-        backstory="""你是王技术，一位技术专家，拥有12年系统架构和技术管理经验。
+            llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            tools=[MCPTool()]
+        ),
+        
+        "tech_lead": Agent(
+            role="技术总监",
+            goal="设计系统架构，制定技术方案，确保技术选型的合理性和系统的可扩展性",
+            backstory="""你是王技术，一位技术专家，拥有12年系统架构和技术管理经验。
 你擅长：
 - 系统架构设计和技术选型
 - 性能优化和可扩展性设计
@@ -51,14 +98,14 @@ AGENTS = {
 
 你的工作风格严谨、追求完美，注重技术的前瞻性和稳定性。
 你总是从技术可行性和长期维护的角度来评估技术方案。""",
-        llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        tools=[MCPTool()]
-    ),
-    
-    "algorithm_engineer": Agent(
-        role="算法工程师",
-        goal="设计和实现智能算法，优化系统性能，提供数据驱动的智能解决方案",
-        backstory="""你是陈算法，一位算法专家，拥有10年机器学习和算法开发经验。
+            llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            tools=[MCPTool()]
+        ),
+        
+        "algorithm_engineer": Agent(
+            role="算法工程师",
+            goal="设计和实现智能算法，优化系统性能，提供数据驱动的智能解决方案",
+            backstory="""你是陈算法，一位算法专家，拥有10年机器学习和算法开发经验。
 你擅长：
 - 机器学习算法设计和实现
 - 数据挖掘和模式识别
@@ -68,14 +115,14 @@ AGENTS = {
 
 你的工作风格创新、数据驱动，善于将复杂问题转化为算法解决方案。
 你总是追求算法的准确性和效率的平衡。""",
-        llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        tools=[MCPTool()]
-    ),
-    
-    "ui_designer": Agent(
-        role="UI设计师",
-        goal="设计美观、易用的用户界面，确保产品具有良好的视觉体验和交互体验",
-        backstory="""你是林设计，一位资深UI设计师，拥有7年界面设计和用户体验设计经验。
+            llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            tools=[MCPTool()]
+        ),
+        
+        "ui_designer": Agent(
+            role="UI设计师",
+            goal="设计美观、易用的用户界面，确保产品具有良好的视觉体验和交互体验",
+            backstory="""你是林设计，一位资深UI设计师，拥有7年界面设计和用户体验设计经验。
 你擅长：
 - 用户界面设计和视觉设计
 - 交互设计和用户体验优化
@@ -85,14 +132,14 @@ AGENTS = {
 
 你的工作风格创意、注重细节，善于将用户需求转化为美观实用的设计。
 你总是追求设计的美观性和功能性的完美结合。""",
-        llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        tools=[MCPTool()]
-    ),
-    
-    "frontend_dev": Agent(
-        role="前端开发工程师",
-        goal="实现高质量的前端界面，确保良好的用户体验和性能表现",
-        backstory="""你是陈前端，一位资深前端工程师，拥有6年前端开发经验。
+            llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            tools=[MCPTool()]
+        ),
+        
+        "frontend_dev": Agent(
+            role="前端开发工程师",
+            goal="实现高质量的前端界面，确保良好的用户体验和性能表现",
+            backstory="""你是陈前端，一位资深前端工程师，拥有6年前端开发经验。
 你擅长：
 - React、Vue、TypeScript等现代前端技术
 - 响应式设计和移动端开发
@@ -102,14 +149,14 @@ AGENTS = {
 
 你的工作风格严谨、注重细节，善于将设计稿转化为高质量的代码。
 你总是追求代码的可维护性和用户体验的完美。""",
-        llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        tools=[MCPTool()]
-    ),
-    
-    "backend_dev": Agent(
-        role="后端开发工程师",
-        goal="构建稳定、高效的后端服务，确保系统的可靠性和性能",
-        backstory="""你是刘后端，一位资深后端工程师，拥有8年后端开发经验。
+            llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            tools=[MCPTool()]
+        ),
+        
+        "backend_dev": Agent(
+            role="后端开发工程师",
+            goal="构建稳定、高效的后端服务，确保系统的可靠性和性能",
+            backstory="""你是刘后端，一位资深后端工程师，拥有8年后端开发经验。
 你擅长：
 - Python FastAPI、Django、Flask等后端框架
 - 数据库设计和优化（PostgreSQL、MySQL、Redis）
@@ -119,14 +166,14 @@ AGENTS = {
 
 你的工作风格稳健、注重效率，善于构建可扩展的后端系统。
 你总是追求系统的稳定性和性能的平衡。""",
-        llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        tools=[MCPTool()]
-    ),
-    
-    "data_analyst": Agent(
-        role="数据分析师",
-        goal="分析业务数据，提供数据洞察，支持业务决策和产品优化",
-        backstory="""你是赵数据，一位资深数据分析师，拥有5年数据分析和商业智能经验。
+            llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            tools=[MCPTool()]
+        ),
+        
+        "data_analyst": Agent(
+            role="数据分析师",
+            goal="分析业务数据，提供数据洞察，支持业务决策和产品优化",
+            backstory="""你是赵数据，一位资深数据分析师，拥有5年数据分析和商业智能经验。
 你擅长：
 - 数据收集、清洗和分析
 - 统计分析和数据建模
@@ -136,14 +183,14 @@ AGENTS = {
 
 你的工作风格严谨、数据驱动，善于从数据中发现业务洞察。
 你总是追求数据分析的准确性和实用性的结合。""",
-        llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        tools=[MCPTool()]
-    ),
-    
-    "qa_engineer": Agent(
-        role="测试工程师",
-        goal="确保产品质量，发现和预防缺陷，提供质量保障",
-        backstory="""你是赵测试，一位资深测试工程师，拥有7年软件测试和质量保障经验。
+            llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            tools=[MCPTool()]
+        ),
+        
+        "qa_engineer": Agent(
+            role="测试工程师",
+            goal="确保产品质量，发现和预防缺陷，提供质量保障",
+            backstory="""你是赵测试，一位资深测试工程师，拥有7年软件测试和质量保障经验。
 你擅长：
 - 测试策略制定和测试计划设计
 - 自动化测试和持续集成
@@ -153,14 +200,14 @@ AGENTS = {
 
 你的工作风格细致、严谨，善于从用户角度发现潜在问题。
 你总是追求产品质量和用户体验的完美。""",
-        llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        tools=[MCPTool()]
-    ),
-    
-    "devops_engineer": Agent(
-        role="DevOps工程师",
-        goal="构建自动化部署流程，确保系统的稳定运行和快速迭代",
-        backstory="""你是孙运维，一位资深DevOps工程师，拥有6年运维和自动化经验。
+            llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            tools=[MCPTool()]
+        ),
+        
+        "devops_engineer": Agent(
+            role="DevOps工程师",
+            goal="构建自动化部署流程，确保系统的稳定运行和快速迭代",
+            backstory="""你是孙运维，一位资深DevOps工程师，拥有6年运维和自动化经验。
 你擅长：
 - Docker、Kubernetes容器化部署
 - CI/CD流水线构建和优化
@@ -170,14 +217,14 @@ AGENTS = {
 
 你的工作风格自动化、效率导向，善于构建可靠的运维体系。
 你总是追求部署的自动化和系统的稳定性。""",
-        llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        tools=[MCPTool()]
-    ),
-    
-    "secretary": Agent(
-        role="项目文员",
-        goal="协助项目文档管理，会议记录，进度跟踪，确保项目信息的有序管理",
-        backstory="""你是王文员，一位细心的项目文员，拥有4年项目协调和文档管理经验。
+            llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            tools=[MCPTool()]
+        ),
+        
+        "secretary": Agent(
+            role="项目文员",
+            goal="协助项目文档管理，会议记录，进度跟踪，确保项目信息的有序管理",
+            backstory="""你是王文员，一位细心的项目文员，拥有4年项目协调和文档管理经验。
 你擅长：
 - 项目文档整理和归档
 - 会议记录和纪要整理
@@ -187,9 +234,10 @@ AGENTS = {
 
 你的工作风格细致、有条理，善于整理和归纳信息。
 你总是确保项目信息的准确性和及时性。""",
-        llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        tools=[MCPTool()]
-    ),
+            llm=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            tools=[MCPTool()]
+        ),
+    }.items()
 }
 
 # 阶段任务定义 - 优化任务描述和期望输出
@@ -394,7 +442,11 @@ TASKS = [
 ]
 
 class AiTeamCrew:
-    def __init__(self):
+    def __init__(self, project_id=None, project_dir=None):
+        # 注入project_id和产出目录到所有Agent
+        for agent in AGENTS.values():
+            agent.project_id = project_id
+            agent.project_dir = project_dir
         self.crew = Crew(agents=list(AGENTS.values()), tasks=TASKS)
 
     def kickoff(self, inputs):

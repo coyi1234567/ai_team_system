@@ -75,12 +75,15 @@ def run(
     archive_and_clean(project_id, project_name)
     # 2. 记录需求ID与内容
     update_project_index(project_id, project_name, requirements)
+    # 3. 创建产出目录
+    project_dir = os.path.join(PROJECTS_ROOT, project_id)
+    os.makedirs(project_dir, exist_ok=True)
     inputs = {
         'project_name': project_name,
         'requirements': requirements
     }
     try:
-        result = AiTeamCrew().kickoff(inputs=inputs)
+        result = AiTeamCrew(project_id=project_id, project_dir=project_dir).kickoff(inputs=inputs)
         print("\n=== 项目执行结果 ===\n")
         print(result)
 
@@ -88,7 +91,14 @@ def run(
         print("\n[AI团队] 正在自动部署项目...\n")
         from mcp_server import MCPServer
         mcp = MCPServer(workspace_path=PROJECTS_ROOT)
-        project_dir = os.path.join(PROJECTS_ROOT, project_id)
+        # 自动部署前校验产出目录和Dockerfile
+        if not os.path.exists(project_dir):
+            print(f"[FATAL] 产出目录不存在: {project_dir}")
+            sys.exit(1)
+        dockerfile_path = os.path.join(project_dir, 'Dockerfile')
+        if not os.path.exists(dockerfile_path):
+            print(f"[FATAL] Dockerfile不存在: {dockerfile_path}")
+            sys.exit(1)
         deploy_result = mcp.deploy_project(project_dir, "python", 8000)
         print("\n=== 自动部署结果 ===\n")
         print(deploy_result.message)
