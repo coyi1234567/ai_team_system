@@ -4,7 +4,7 @@ import datetime
 from crewai import Crew, Agent, Task
 from .crew_tools import MCPTool
 from pydantic import PrivateAttr
-from typing import Optional, cast
+from typing import Optional, cast, List
 
 class LoggingAgent(Agent):
     _project_id: 'str' = PrivateAttr(default="")
@@ -400,6 +400,40 @@ TASKS = [
     ),
 ]
 
+def multi_agent_discussion(stage_name: str, agents: List[Agent], initial_input: str, project_dir: str, rounds: int = 3) -> str:
+    """
+    多角色多轮对话，最终由最后一个Agent汇总共识。
+    :param stage_name: 阶段名（如需求分析）
+    :param agents: 参与角色列表
+    :param initial_input: 初始输入（如需求）
+    :param project_dir: 产出目录
+    :param rounds: 对话轮数
+    :return: 共识产出
+    """
+    context = initial_input
+    discussion_log = []
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    for r in range(rounds):
+        for agent in agents:
+            prompt = f"【阶段】{stage_name} 第{r+1}轮\n【当前上下文】\n{context}\n请以你的身份补充、提问、质疑或确认。"
+            result = agent.execute_task(Task(name=f"{stage_name}_discussion_round{r+1}_{agent.role}", description=prompt, expected_output="请补充你的观点/建议/问题/确认。", agent=agent), context=context)
+            discussion_log.append(f"[{now}] {agent.role} 第{r+1}轮: {result}")
+            context += f"\n{agent.role}：{result}"
+    # 最后由最后一个Agent汇总共识
+    summary_prompt = f"【阶段】{stage_name}共识汇总\n【全部对话】\n{context}\n请以你的身份对本阶段进行总结，输出最终共识文档。"
+    consensus = agents[-1].execute_task(Task(name=f"{stage_name}_consensus", description=summary_prompt, expected_output="请输出最终共识文档。", agent=agents[-1]), context=context)
+    # 写入对话日志
+    if project_dir:
+        log_path = os.path.join(project_dir, f"{stage_name}_discussion_log.txt")
+        with open(log_path, 'w', encoding='utf-8') as f:
+            for line in discussion_log:
+                f.write(line + '\n')
+        # 共识产出也写入主产出文件
+        consensus_path = os.path.join(project_dir, f"{stage_name}_共识文档.md")
+        with open(consensus_path, 'w', encoding='utf-8') as f:
+            f.write(consensus.strip() + '\n')
+    return consensus
+
 class AiTeamCrew:
     def __init__(self, project_id=None, project_dir=None):
         # 注入project_id和产出目录到所有Agent，强制转为str，保证类型安全
@@ -411,4 +445,48 @@ class AiTeamCrew:
         self.crew = Crew(agents=list(AGENTS.values()), tasks=TASKS)
 
     def kickoff(self, inputs):
-        return self.crew.kickoff(inputs=inputs) 
+        # 多Agent上下文链路自动传递 + 多角色多轮对话
+        context = dict(inputs) if inputs else {}
+        results = {}
+        # 1. 需求分析阶段：老板-产品经理-技术总监多轮对话，产品经理汇总
+        project_dir = AGENTS["product_manager"]._project_dir
+        initial_input = f"项目需求：{inputs.get('requirements', '')}"
+        consensus = multi_agent_discussion(
+            stage_name="需求分析",
+            agents=[AGENTS["boss"], AGENTS["product_manager"], AGENTS["tech_lead"]],
+            initial_input=initial_input,
+            project_dir=project_dir,
+            rounds=3
+        )
+        results["requirement_analysis"] = consensus
+        context["requirement_analysis_result"] = consensus
+        # 2. 其余阶段串行+上下文传递（可后续扩展为多角色对话）
+        for task in TASKS:
+            if task.name == "requirement_analysis":
+                continue  # 已在上面处理
+            if task.name == "technical_design" and "requirement_analysis" in results:
+                context["requirement_analysis_result"] = results["requirement_analysis"]
+            if task.name == "ui_design" and "technical_design" in results:
+                context["technical_design_result"] = results["technical_design"]
+            if task.name == "frontend_development" and "ui_design" in results:
+                context["ui_design_result"] = results["ui_design"]
+            if task.name == "backend_development" and "technical_design" in results:
+                context["technical_design_result"] = results["technical_design"]
+            if task.name == "testing":
+                if "frontend_development" in results:
+                    context["frontend_development_result"] = results["frontend_development"]
+                if "backend_development" in results:
+                    context["backend_development_result"] = results["backend_development"]
+            if task.name == "deployment" and "testing" in results:
+                context["testing_result"] = results["testing"]
+            if task.name == "acceptance":
+                for key in ["requirement_analysis","technical_design","ui_design","frontend_development","backend_development","testing","deployment"]:
+                    if key in results:
+                        context[f"{key}_result"] = results[key]
+            agent = task.agent
+            if agent is None:
+                continue
+            context_str = str(context) if context else None
+            result = agent.execute_task(task, context=context_str, tools=task.tools)
+            results[task.name] = result
+        return results 
