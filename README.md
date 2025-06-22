@@ -1,13 +1,11 @@
-# AI团队系统（专业多Agent + RAG知识库 + 权限管理）
+# AI团队系统（多Agent + RAG知识库 + 权限管理）
 
 ## 项目简介
-
 本系统是面向企业级AI团队的多智能体（Multi-Agent）协作平台，支持专业角色分工、MCP协议工具集成、本地RAG知识库检索、企业级RBAC+ABAC权限管理，助力AI项目高效落地。
 
 ---
 
 ## 主要功能
-
 - **多Agent协作**：支持项目总监、产品经理、技术总监、前后端、算法、UI、数据分析、测试、DevOps、文员等11大专业角色，流程全覆盖。
 - **MCP协议工具**：统一MCP协议接口，支持文件/代码/部署/自动化等标准化操作。
 - **本地RAG知识库**：支持Chroma向量库+BM25关键词混合检索，知识块可按角色/文件分权。
@@ -18,7 +16,6 @@
 ---
 
 ## 目录结构
-
 ```
 ai_team_system/
 ├── src/                  # 核心代码
@@ -80,16 +77,9 @@ print(rag_search("u001", "boss", "项目管理最佳实践"))
 
 ---
 
-## 进阶用法
-- 支持自定义知识库内容，支持多角色/多文件夹/多格式
-- 可扩展API服务、Web前端、管理后台等
-- 支持企业级权限灵活扩展
-
----
-
 ## 依赖环境
 - Python 3.9+
-- 主要依赖：crewai, typer, rich, pyyaml, openai, chromadb, sentence-transformers, scikit-learn
+- 主要依赖：crewai, typer, rich, pyyaml, openai, chromadb, sentence-transformers, scikit-learn, docker
 
 ---
 
