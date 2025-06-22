@@ -13,6 +13,7 @@
 - **一键知识库构建**：自动分块、嵌入、索引，支持txt/md/yaml等多格式批量导入。
 - **可扩展API**：支持集成API服务、管理后台、前端等。
 - **需求驱动全自动部署**：只需下达需求，AI团队自动完成代码生成、文档、测试、Docker镜像构建与容器部署，无需手动输入任何参数。
+- **需求ID唯一+自动归档清理**：每个需求有唯一ID（如项目名），每次执行同名需求时，系统会自动归档并清理旧产出、日志、Docker容器，保证每次都是全新环境。所有需求ID与内容的映射关系记录在`projects/project_index.json`，支持历史追溯和环境隔离。
 
 ---
 
@@ -20,7 +21,7 @@
 ```
 ai_team_system/
 ├── src/                  # 核心代码
-│   ├── main.py           # Typer命令行入口（已集成全自动部署）
+│   ├── main.py           # Typer命令行入口（已集成全自动部署+需求ID唯一+自动归档清理）
 │   ├── crew.py           # 多Agent团队与流程
 │   ├── crew_tools.py     # MCP工具适配
 │   ├── rag_api.py        # RAG检索+权限API
@@ -29,7 +30,8 @@ ai_team_system/
 ├── knowledge_base/       # 角色知识库（分角色/分文件夹）
 ├── vector_db/            # 本地Chroma向量库/BM25索引
 ├── config/               # 角色、模型、团队配置
-├── projects/             # 项目输出
+├── projects/             # 项目输出及project_index.json
+├── archive/              # 历史归档产出
 ├── requirements.txt      # 依赖
 └── README.md             # 项目说明
 ```
@@ -55,6 +57,8 @@ python -m src.main --project-name "员工请假小程序" --requirements "开发
 ```
 - 系统会自动完成需求分析、代码/文档/测试/部署脚本生成、Docker镜像构建与容器部署。
 - 你无需手动输入任何部署参数，服务自动上线。
+- 每次执行同名需求时，系统会自动归档并清理旧产出、日志、Docker容器，保证环境唯一。
+- 所有需求ID与内容的映射关系可在`projects/project_index.json`查阅。
 
 ### 4. RAG知识库检索（带权限）
 ```python
