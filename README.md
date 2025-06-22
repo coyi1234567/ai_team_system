@@ -249,6 +249,14 @@ projects/员工请假小程序/
   3. `projects/{需求ID}/` 目录是否被误删或权限不足。
 - 如需溯源LLM对话、调试Agent行为，可直接查阅 `llm_log.txt`。
 - 如需查看项目进度或从指定阶段继续，使用 `--show-progress` 和 `--resume-from` 参数。
+- **如遇到 `No module named 'src'` 或 `can't open file 'src/main.py'` 错误：**
+  - 请确保你已进入 `ai_team_system` 目录后再运行命令：
+    ```bash
+    cd ai_team_system
+    python src/main.py --project-name "员工请假系统" --requirements "..."
+    ```
+  - 如果在项目根目录直接运行 `python -m src.main ...` 会报错，因为此时 `src` 不是包的上级目录。
+  - 一定要在 `ai_team_system` 目录下运行 `python src/main.py ...`。
 
 ---
 
