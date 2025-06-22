@@ -12,6 +12,7 @@
 - **企业级权限管理**：RBAC+ABAC混合模型，支持用户/角色/资源/操作多维权限，个人特批优先。
 - **一键知识库构建**：自动分块、嵌入、索引，支持txt/md/yaml等多格式批量导入。
 - **可扩展API**：支持集成API服务、管理后台、前端等。
+- **需求驱动全自动部署**：只需下达需求，AI团队自动完成代码生成、文档、测试、Docker镜像构建与容器部署，无需手动输入任何参数。
 
 ---
 
@@ -19,7 +20,7 @@
 ```
 ai_team_system/
 ├── src/                  # 核心代码
-│   ├── main.py           # Typer命令行入口
+│   ├── main.py           # Typer命令行入口（已集成全自动部署）
 │   ├── crew.py           # 多Agent团队与流程
 │   ├── crew_tools.py     # MCP工具适配
 │   ├── rag_api.py        # RAG检索+权限API
@@ -48,12 +49,12 @@ pip install -r requirements.txt
 python src/ingest_knowledge_base.py
 ```
 
-### 3. 启动AI团队项目
+### 3. 启动AI团队项目（全自动部署，无需参数！）
 ```bash
-python -m src.main
-# 或自定义项目
-python -m src.main --project-name "智能客服系统" --requirements "开发一个AI客服平台..."
+python -m src.main --project-name "员工请假小程序" --requirements "开发一个员工请假小程序，支持多级审批、权限管理、请假记录查询、移动端适配、RAG知识库、MCP协议集成、自动化部署。"
 ```
+- 系统会自动完成需求分析、代码/文档/测试/部署脚本生成、Docker镜像构建与容器部署。
+- 你无需手动输入任何部署参数，服务自动上线。
 
 ### 4. RAG知识库检索（带权限）
 ```python

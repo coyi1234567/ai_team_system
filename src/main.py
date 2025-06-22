@@ -21,6 +21,25 @@ def run(
         result = AiTeamCrew().kickoff(inputs=inputs)
         print("\n=== 项目执行结果 ===\n")
         print(result)
+
+        # === 自动部署逻辑 ===
+        print("\n[AI团队] 正在自动部署项目...\n")
+        from mcp_server import MCPServer
+        mcp = MCPServer(workspace_path="../projects")
+        # 自动检测最新项目目录
+        projects_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../projects'))
+        # 以项目名为目录名
+        project_dir = os.path.join(projects_root, project_name)
+        if not os.path.exists(project_dir):
+            # 兜底：取projects下最新目录
+            all_dirs = [os.path.join(projects_root, d) for d in os.listdir(projects_root) if os.path.isdir(os.path.join(projects_root, d))]
+            if all_dirs:
+                project_dir = max(all_dirs, key=os.path.getmtime)
+        deploy_result = mcp.deploy_project(project_dir, "python", 8000)
+        print("\n=== 自动部署结果 ===\n")
+        print(deploy_result.message)
+        print(deploy_result.logs)
+        print("\n[AI团队] 项目已自动部署完毕！\n")
     except Exception as e:
         err_msg = f"[FATAL] {str(e)}\n" + traceback.format_exc()
         print("\n=== 发生致命错误 ===\n")
