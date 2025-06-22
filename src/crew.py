@@ -18,6 +18,29 @@ class LoggingAgent(Agent):
         self._project_dir = project_dir or ""
 
     def execute_task(self, task, context=None, tools=None):
+        # 处理任务描述中的参数替换
+        task_description = task.description
+        if context and isinstance(context, dict):
+            # 如果是字典格式的上下文，进行参数替换
+            try:
+                task_description = task_description.format(**context)
+            except KeyError:
+                # 如果缺少某些参数，保持原样
+                pass
+        elif context and isinstance(context, str):
+            # 如果是字符串格式的上下文，尝试解析为字典
+            try:
+                import ast
+                context_dict = ast.literal_eval(context)
+                if isinstance(context_dict, dict):
+                    task_description = task_description.format(**context_dict)
+            except:
+                # 解析失败，保持原样
+                pass
+        
+        # 创建临时任务对象，替换描述
+        task.prompt = lambda: task_description
+        
         task_prompt = task.prompt()
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         role = self.role

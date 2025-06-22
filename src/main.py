@@ -1,12 +1,17 @@
-import typer
-from .crew import AiTeamCrew
-import traceback
-import sys
 import os
-import shutil
-import json
+import sys
 import time
+import json
+import traceback
+import typer
+from pathlib import Path
 from dotenv import load_dotenv
+
+# 添加项目根目录到Python路径
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from src.crew import AiTeamCrew
 
 # 自动加载.env环境变量
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '../.env'))
