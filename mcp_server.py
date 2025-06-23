@@ -15,6 +15,8 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 import logging
 from docker.errors import NotFound
+from pypinyin import lazy_pinyin
+import re
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -413,38 +415,20 @@ CMD ["npm", "start"]
             return DockerResult(False, f"项目部署失败: {str(e)}")
 
     def _normalize_project_name(self, project_name: str) -> str:
-        """智能处理项目名称，确保Docker兼容"""
-        # 中文项目名映射表
-        chinese_mapping = {
-            "员工请假小程序": "employee_leave_app",
-            "员工请假系统": "employee_leave_system", 
-            "员工请假程序": "employee_leave_program",
-            "请假系统": "leave_system",
-            "请假小程序": "leave_app",
-            "请假程序": "leave_program"
-        }
-        
-        # 1. 检查是否有预定义映射
-        if project_name in chinese_mapping:
-            return chinese_mapping[project_name]
-        
-        # 2. 通用中文处理：移除中文字符，保留英文数字
-        import re
-        # 移除所有中文字符，只保留英文、数字、下划线、连字符
-        safe_name = re.sub(r'[^\w\-_.]', '_', project_name)
-        
-        # 3. 确保不以数字开头（Docker标签规范）
+        """智能处理项目名称，确保Docker兼容（自动拼音+安全处理）"""
+        # 1. 中文转拼音（全拼，单词间用下划线连接）
+        pinyin_name = "_".join(lazy_pinyin(project_name))
+        # 2. 保留英文、数字、下划线、连字符和点号
+        safe_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', pinyin_name)
+        # 3. 不以数字开头
         if safe_name and safe_name[0].isdigit():
             safe_name = f"app_{safe_name}"
-        
-        # 4. 确保长度合理
+        # 4. 长度限制
         if len(safe_name) > 50:
             safe_name = safe_name[:50]
-        
-        # 5. 确保不为空
+        # 5. 不为空
         if not safe_name:
             safe_name = "default_app"
-            
         return safe_name
 
     def stop_container(self, container_name: str) -> DockerResult:
