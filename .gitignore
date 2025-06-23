@@ -2,6 +2,72 @@ venv/
 ai_team_system/
 llm_fullstack_demo/
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Model files (too large for git)
+models/
+*.safetensors
+*.bin
+*.pkl
+*.pth
+
+# Vector database
+vector_db/
+*.sqlite3
+
+# Project outputs
+projects/*/llm_log.txt
+projects/*/auto_exec_log.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+
 .env
 *.key
 *.pem

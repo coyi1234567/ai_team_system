@@ -53,6 +53,35 @@ cp .env.example .env
 python src/ingest_knowledge_base.py
 ```
 
+#### 知识库构建说明
+- **支持模型**：BAAI/bge-large-zh-v1.5、BAAI/bge-small-zh-v1.5等
+- **自动镜像**：系统自动配置HF镜像源 `https://hf-mirror.com`
+- **离线模式**：网络不可用时自动启用离线模式，使用随机向量
+- **混合搜索**：同时构建Chroma向量库和BM25关键词索引
+
+#### 代理配置（如遇网络问题）
+```bash
+# 方法1：设置环境变量
+export HF_ENDPOINT="https://hf-mirror.com"
+export HF_HUB_URL="https://hf-mirror.com"
+python src/ingest_knowledge_base.py
+
+# 方法2：使用代理配置工具
+python proxy_config.py
+# 选择相应的配置选项
+
+# 方法3：手动设置HTTP代理
+export HTTP_PROXY="http://127.0.0.1:7890"
+export HTTPS_PROXY="http://127.0.0.1:7890"
+python src/ingest_knowledge_base.py
+```
+
+#### 测试知识库
+```bash
+# 测试知识库功能
+python test_knowledge_base.py
+```
+
 ### 3. 启动开发流程
 
 ```bash
@@ -232,15 +261,19 @@ ai_team_system/
 │   ├── crew.py            # AI团队协作逻辑
 │   ├── crew_core.py       # 核心协作功能
 │   ├── crew_tools.py      # 工具定义
+│   ├── ingest_knowledge_base.py # 知识库构建脚本
 │   ├── agents/            # Agent定义
 │   ├── tools/             # 工具实现
 │   └── utils/             # 工具函数
 ├── mcp_server.py          # MCP服务器
+├── proxy_config.py        # 代理配置工具
+├── test_knowledge_base.py # 知识库测试脚本
 ├── knowledge_base/        # 知识库文件
 ├── config/               # 配置文件
 ├── projects/             # 项目产出目录
 ├── logs/                 # 日志文件
-└── vector_db/            # 向量数据库
+├── vector_db/            # 向量数据库
+└── models/               # 模型缓存目录
 ```
 
 ## 🎯 使用示例
@@ -299,6 +332,8 @@ python src/main.py --project-name "员工请假小程序" --reset-progress
     export HF_HUB_URL="https://hf-mirror.com"
     ```
   - 或使用其他国内镜像：`https://huggingface.co.cn`
+  - 使用代理配置工具：`python proxy_config.py`
+  - 网络完全不可用时，系统会自动启用离线模式
 
 ### Docker相关问题
 - **如遇到Docker镜像名称错误**：
@@ -316,6 +351,20 @@ python src/main.py --project-name "员工请假小程序" --reset-progress
   - 系统已启用智能上下文管理，自动压缩和去重
   - 检查是否有大量重复内容
   - 可调整`max_context_size`参数控制上下文大小
+
+### 知识库构建问题
+- **如遇到知识库构建失败**：
+  - 检查网络连接和代理设置
+  - 确认`knowledge_base/`目录下有角色知识文件
+  - 查看错误日志，确认具体失败原因
+  - 可尝试使用离线模式：系统会自动使用随机向量
+
+### 代理配置问题
+- **如遇到代理设置不生效**：
+  - 确认环境变量设置正确：`echo $HF_ENDPOINT`
+  - 尝试重启终端或重新激活虚拟环境
+  - 使用代理配置工具：`python proxy_config.py`
+  - 检查防火墙和网络设置
 
 ## 📊 性能优化
 
@@ -342,6 +391,12 @@ python src/main.py --project-name "员工请假小程序" --reset-progress
 本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
 
 ## 🆕 更新日志
+
+### v3.1 (2024-06-23)
+- 🔧 **知识库构建优化**：支持BGE模型、自动镜像配置、离线模式
+- 🌐 **代理配置工具**：提供多种代理方案和镜像源选择
+- 🧪 **知识库测试**：新增知识库功能测试脚本
+- 📚 **文档完善**：详细的知识库构建和代理配置说明
 
 ### v3.0 (2024-06-23)
 - 🧠 **智能上下文管理**：分层、去重、压缩、优先级管理，平均节省30-60% Token消耗
