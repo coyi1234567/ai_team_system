@@ -1,6 +1,7 @@
 import os
 import sys
 import datetime
+import json as _json
 from crewai import Agent, Task
 from pydantic import PrivateAttr
 from typing import Optional
@@ -10,6 +11,7 @@ class LoggingAgent(Agent):
     带有自动日志、产物落盘、代码块提取能力的Agent基类。
     - 自动将输入输出日志写入llm_log.txt
     - 自动将产物/代码块落盘到对应文件
+    - 强制结构化产出，支持多文件和action
     """
     _project_id: str = PrivateAttr(default="")
     _project_dir: str = PrivateAttr(default="")
@@ -24,6 +26,18 @@ class LoggingAgent(Agent):
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         role = self.role
         task_name = getattr(task, 'name', 'unknown')
+        # === 自动注入目标文件内容 ===
+        file_path = None
+        if context and isinstance(context, str) and '__file_path__:' in context:
+            # 约定context中包含__file_path__:xxx，自动注入
+            for line in context.splitlines():
+                if line.startswith('__file_path__:'):
+                    file_path = line.replace('__file_path__:', '').strip()
+                    break
+        if file_path:
+            file_content = self._read_file_content(file_path)
+            if file_content:
+                context = f"【当前{file_path}内容】\n{file_content}\n\n" + (context or "")
         # 控制台打印输入
         print(f"\n================ LLM调用日志 ================")
         print(f"[{now}] 角色: {role} 任务: {task_name}")
@@ -47,36 +61,53 @@ class LoggingAgent(Agent):
                     f.write(f"【上下文】\n{context}\n")
                 f.write(f"【输出Result】\n{result}\n")
                 f.write(f"--------------------------------------------\n")
-        # === 自动产出落盘机制 ===
+        # === 自动产出落盘机制（结构化产出） ===
         if self._project_dir and isinstance(self._project_dir, str) and self._project_dir.strip() != "" and task_name:
-            project_dir: str = self._project_dir
-            name_map = {
-                'requirement_analysis': '需求分析.md',
-                'technical_design': '技术设计.md',
-                'ui_design': 'UI设计.md',
-                'algorithm_design': '算法设计.md',
-                'frontend_development': 'frontend/前端开发.md',
-                'backend_development': 'backend/后端开发.md',
-                'data_analysis': '数据分析报告.md',
-                'testing': '测试报告.md',
-                'deployment': '部署文档.md',
-                'documentation': '项目文档.md',
-                'acceptance': '项目验收报告.md',
-            }
-            out_file = name_map.get(task_name, f'{task_name}.md')
-            if out_file and isinstance(out_file, str):
-                out_path = os.path.join(project_dir, out_file)
-                os.makedirs(os.path.dirname(out_path), exist_ok=True)
-                if 'Dockerfile' in result:
-                    dockerfile_path = os.path.join(project_dir, 'Dockerfile')
-                    docker_content = self._extract_block(result, 'Dockerfile')
-                    if docker_content:
-                        with open(dockerfile_path, 'w', encoding='utf-8') as f:
-                            f.write(docker_content.strip() + '\n')
+            try:
+                # 尝试解析结构化JSON产出
+                files = _json.loads(result) if isinstance(result, str) else result
+                if isinstance(files, dict):
+                    files = [files]
+                for file_obj in files:
+                    self._save_file_by_action(file_obj)
+            except Exception as e:
+                print(f"[LoggingAgent] 结构化产出解析失败，回退到原始代码块提取: {e}")
                 self._extract_and_write_code_blocks(result)
-                with open(out_path, 'w', encoding='utf-8') as f:
-                    f.write(result.strip() + '\n')
         return result
+
+    def _save_file_by_action(self, file_obj):
+        """根据action参数保存文件，支持create/replace/append/insert/delete"""
+        file_path = file_obj.get("file_path")
+        content = file_obj.get("content", "")
+        action = file_obj.get("action", "replace")
+        if not file_path:
+            return
+        abs_path = os.path.join(self._project_dir, file_path)
+        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+        if action == "replace" or action == "create":
+            with open(abs_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+        elif action == "append":
+            with open(abs_path, 'a', encoding='utf-8') as f:
+                f.write(content)
+        elif action == "insert":
+            # 简单插入到文件开头
+            old = ""
+            if os.path.exists(abs_path):
+                with open(abs_path, 'r', encoding='utf-8') as f:
+                    old = f.read()
+            with open(abs_path, 'w', encoding='utf-8') as f:
+                f.write(content + '\n' + old)
+        elif action == "delete":
+            if os.path.exists(abs_path):
+                os.remove(abs_path)
+
+    def _read_file_content(self, file_path: str) -> str:
+        abs_path = os.path.join(self._project_dir, file_path)
+        if os.path.exists(abs_path):
+            with open(abs_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        return ""
 
     def _extract_block(self, text: str, block_name: str) -> Optional[str]:
         """提取如```Dockerfile ...```或```block_name ...```的内容"""

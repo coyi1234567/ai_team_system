@@ -436,6 +436,15 @@ def multi_agent_discussion(stage_name: str, agents: List[Agent], context: Dict[s
     current_round = 0
     max_rounds = min(max_rounds, 10)  # 最多10轮
     
+    # 针对典型开发阶段，自动注入目标文件路径
+    stage_file_map = {
+        'frontend_development': 'frontend/app.js',
+        'backend_development': 'backend/main.py',
+        'frontend_code': 'frontend/app.js',
+        'backend_code': 'backend/main.py',
+    }
+    file_path = stage_file_map.get(stage_name, None)
+    
     # 渐进式讨论：每轮都检测共识状态
     while current_round < max_rounds and not consensus_detected:
         current_round += 1
@@ -449,7 +458,6 @@ def multi_agent_discussion(stage_name: str, agents: List[Agent], context: Dict[s
                 if context_manager:
                     optimized_context = context_manager.get_context_for_stage(stage_name, agent.role)
                 else:
-                    # 降级到简单上下文
                     simplified_context = {
                         'project_id': context.get('project_id', ''),
                         'project_dir': context.get('project_dir', ''),
@@ -458,40 +466,35 @@ def multi_agent_discussion(stage_name: str, agents: List[Agent], context: Dict[s
                         'current_round': current_round
                     }
                     optimized_context = str(simplified_context)
-                
+                # 自动注入__file_path__到context
+                if file_path:
+                    if isinstance(optimized_context, str):
+                        optimized_context = f'__file_path__:{file_path}\n' + optimized_context
+                    elif isinstance(optimized_context, dict):
+                        optimized_context['__file_path__'] = file_path
                 # 根据轮次生成不同的提示词
                 if current_round == 1:
-                    # 第一轮：独立发言，提供专业观点
                     prompt = _generate_first_round_prompt(agent.role, stage_name, context)
                 else:
-                    # 后续轮次：基于前轮结果，逐步逼近共识
                     previous_summary = "\n".join(discussion_log[-len(agents):])
                     consensus_status = _analyze_consensus_status(discussion_log[-len(agents):])
                     prompt = _generate_follow_up_prompt(agent.role, stage_name, current_round, previous_summary, consensus_status)
-                
                 task = Task(
                     name=f"{stage_name}_discussion_round{current_round}_{agent.role}",
                     description=prompt,
                     expected_output="请提供具体的专业观点和建议。",
                     agent=agent
                 )
-                
                 result = agent.execute_task(task, context=optimized_context)
                 round_results.append(result)
                 discussion_log.append(f"=== 第{current_round}轮 {agent.role} 观点 ===\n{result}")
-                
-                # 缓存上下文
                 context_key = f"{agent.role}_{stage_name}"
                 context_cache[context_key] = {'last_output': result}
-                
             except Exception as e:
                 print(f"[多Agent讨论] {agent.role} 第{current_round}轮发言异常: {e}")
                 discussion_log.append(f"=== 第{current_round}轮 {agent.role} 发言异常: {e} ===")
-        
-        # 检测本轮共识状态
         print(f"[多Agent讨论] 检测第{current_round}轮共识状态...")
         consensus_detected = _detect_consensus(round_results)
-        
         if consensus_detected:
             print(f"[多Agent讨论] 第{current_round}轮检测到共识，结束讨论")
             break
@@ -499,29 +502,19 @@ def multi_agent_discussion(stage_name: str, agents: List[Agent], context: Dict[s
             print(f"[多Agent讨论] 第{current_round}轮未达成共识，继续下一轮")
         else:
             print(f"[多Agent讨论] 达到最大轮次{max_rounds}，强制结束讨论")
-    
-    # 最终汇总：生成共识文档
     print(f"[多Agent讨论] 生成最终共识文档")
     try:
-        # 选择最适合的Agent进行汇总
         summary_agent = _select_summary_agent(stage_name, agents)
-        
-        # 生成最终共识文档
         consensus_prompt = _generate_consensus_prompt(stage_name, discussion_log, current_round, consensus_detected)
-        
         consensus_task = Task(
             name=f"{stage_name}_consensus",
             description=consensus_prompt,
             expected_output="请生成结构化的共识文档。",
             agent=summary_agent
         )
-        
         consensus_result = summary_agent.execute_task(consensus_task, context=f"讨论记录: {chr(10).join(discussion_log)}")
-        
-        # 保存讨论日志和共识文档
         discussion_log_path = os.path.join(context.get('project_dir', ''), f'{stage_name}_discussion_log.txt')
         consensus_path = os.path.join(context.get('project_dir', ''), f'{stage_name}_共识文档.md')
-        
         try:
             with open(discussion_log_path, 'w', encoding='utf-8') as f:
                 f.write(f"# {stage_name} 阶段讨论日志\n\n")
@@ -529,18 +522,13 @@ def multi_agent_discussion(stage_name: str, agents: List[Agent], context: Dict[s
                 f.write(f"共识状态: {'已达成共识' if consensus_detected else '未完全达成共识'}\n")
                 f.write(f"结束原因: {'自然达成' if consensus_detected else '达到最大轮次'}\n\n")
                 f.write(chr(10).join(discussion_log))
-            
             with open(consensus_path, 'w', encoding='utf-8') as f:
                 f.write(consensus_result)
-                
             print(f"[多Agent讨论] 讨论日志已保存: {discussion_log_path}")
             print(f"[多Agent讨论] 共识文档已保存: {consensus_path}")
-            
         except Exception as e:
             print(f"[多Agent讨论] 保存文件异常: {e}")
-        
         return consensus_result
-        
     except Exception as e:
         print(f"[多Agent讨论] 生成共识文档异常: {e}")
         return f"共识文档生成失败: {e}\n讨论记录:\n{chr(10).join(discussion_log)}"

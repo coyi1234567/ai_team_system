@@ -3,6 +3,7 @@ from crewai.tools import BaseTool
 from mcp_server import MCPServer
 from pydantic import PrivateAttr
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -45,17 +46,35 @@ class MCPTool(BaseTool):
         self._mcp = MCPServer(workspace_path=workspace_path)
         logger.info(f"MCPTool初始化完成，工作目录: {workspace_path}")
 
-    def write_code(self, file_path: str, requirements: str) -> str:
-        """生成并写入代码到文件"""
+    def write_code(self, file_path: str, requirements: str, action: str = "replace") -> str:
+        """生成并写入代码到文件，支持action参数"""
         try:
-            logger.info(f"开始生成代码: {file_path}")
+            logger.info(f"开始生成代码: {file_path}，操作: {action}")
             result = self._mcp.generate_code(requirements, file_path)
-            if result.success:
-                logger.info(f"代码生成成功: {file_path}")
-                return f"✅ 代码已成功生成并写入到 {file_path}\n文件大小: {len(result.content)} 字符"
-            else:
+            if not result.success:
                 logger.error(f"代码生成失败: {result.message}")
                 return f"❌ 代码生成失败: {result.message}\n建议: 检查需求描述是否清晰，文件路径是否有效"
+            content = result.content
+            abs_path = file_path
+            os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+            if action == "replace" or action == "create":
+                with open(abs_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+            elif action == "append":
+                with open(abs_path, 'a', encoding='utf-8') as f:
+                    f.write(content)
+            elif action == "insert":
+                old = ""
+                if os.path.exists(abs_path):
+                    with open(abs_path, 'r', encoding='utf-8') as f:
+                        old = f.read()
+                with open(abs_path, 'w', encoding='utf-8') as f:
+                    f.write(content + '\n' + old)
+            elif action == "delete":
+                if os.path.exists(abs_path):
+                    os.remove(abs_path)
+            logger.info(f"代码{action}成功: {file_path}")
+            return f"✅ 代码已{action}到 {file_path}\n文件大小: {len(content)} 字符"
         except Exception as e:
             logger.error(f"代码生成异常: {e}")
             return f"❌ 代码生成异常: {str(e)}\n建议: 检查系统环境和权限设置"
@@ -108,14 +127,12 @@ class MCPTool(BaseTool):
     def _run(self, tool_input: str) -> str:
         """BaseTool要求的_run方法 - 智能解析输入并调用相应方法"""
         try:
-            # 尝试解析JSON格式的输入
             import json
             try:
                 params = json.loads(tool_input)
                 action = params.get("action", "")
-                
                 if action == "write_code":
-                    return self.write_code(params.get("file_path", ""), params.get("requirements", ""))
+                    return self.write_code(params.get("file_path", ""), params.get("requirements", ""), params.get("write_action", "replace"))
                 elif action == "read_file":
                     return self.read_file(params.get("file_path", ""))
                 elif action == "execute_code":
@@ -124,17 +141,13 @@ class MCPTool(BaseTool):
                     return self.run_shell_command(params.get("cmd", ""))
                 else:
                     return f"❌ 未知操作: {action}\n支持的操作: write_code, read_file, execute_code, run_shell_command"
-                    
             except json.JSONDecodeError:
-                # 如果不是JSON格式，返回使用说明
                 return f"""MCPTool使用说明:
-                
 输入格式应为JSON，例如：
-{{"action": "write_code", "file_path": "main.py", "requirements": "创建一个简单的Hello World程序"}}
+{{"action": "write_code", "file_path": "main.py", "requirements": "创建一个简单的Hello World程序", "write_action": "replace"}}
 {{"action": "read_file", "file_path": "main.py"}}
 {{"action": "execute_code", "file_path": "main.py", "args": ["arg1", "arg2"]}}
 {{"action": "run_shell_command", "cmd": "ls -la"}}
-
 当前输入: {tool_input}
 """
         except Exception as e:
