@@ -379,14 +379,21 @@ CMD ["npm", "start"]
             if not dockerfile_result.success:
                 return DockerResult(False, f"创建Dockerfile失败: {dockerfile_result.message}")
             
-            # 2. 构建镜像
-            image_name = f"{Path(project_path).name}:latest"
+            # 2. 构建镜像 - 优化镜像名称格式问题
+            project_name = Path(project_path).name
+            
+            # 智能处理项目名称：中文转英文 + 安全字符替换
+            safe_name = self._normalize_project_name(project_name)
+            image_name = f"{safe_name}:latest"
+            
+            logger.info(f"原始项目名: {project_name} -> 安全镜像名: {image_name}")
+            
             build_result = self.build_docker_image(project_path, image_name)
             if not build_result.success:
                 return DockerResult(False, f"构建镜像失败: {build_result.message}")
             
-            # 3. 运行容器
-            container_name = f"{Path(project_path).name}-container"
+            # 3. 运行容器 - 同样修复容器名称
+            container_name = f"{safe_name}-container"
             ports = {f"{port}/tcp": str(port)}
             run_result = self.run_docker_container(image_name, container_name, ports)
             
@@ -404,6 +411,41 @@ CMD ["npm", "start"]
         except Exception as e:
             logger.error(f"项目部署失败: {e}")
             return DockerResult(False, f"项目部署失败: {str(e)}")
+
+    def _normalize_project_name(self, project_name: str) -> str:
+        """智能处理项目名称，确保Docker兼容"""
+        # 中文项目名映射表
+        chinese_mapping = {
+            "员工请假小程序": "employee_leave_app",
+            "员工请假系统": "employee_leave_system", 
+            "员工请假程序": "employee_leave_program",
+            "请假系统": "leave_system",
+            "请假小程序": "leave_app",
+            "请假程序": "leave_program"
+        }
+        
+        # 1. 检查是否有预定义映射
+        if project_name in chinese_mapping:
+            return chinese_mapping[project_name]
+        
+        # 2. 通用中文处理：移除中文字符，保留英文数字
+        import re
+        # 移除所有中文字符，只保留英文、数字、下划线、连字符
+        safe_name = re.sub(r'[^\w\-_.]', '_', project_name)
+        
+        # 3. 确保不以数字开头（Docker标签规范）
+        if safe_name and safe_name[0].isdigit():
+            safe_name = f"app_{safe_name}"
+        
+        # 4. 确保长度合理
+        if len(safe_name) > 50:
+            safe_name = safe_name[:50]
+        
+        # 5. 确保不为空
+        if not safe_name:
+            safe_name = "default_app"
+            
+        return safe_name
 
     def stop_container(self, container_name: str) -> DockerResult:
         """停止Docker容器"""

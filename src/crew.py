@@ -29,122 +29,109 @@ class LoggingAgent(Agent):
         self._project_dir = project_dir or ""
 
     def execute_task(self, task, context=None, tools=None):
-        # 处理任务描述中的参数替换
-        task_description = task.description
-        if context and isinstance(context, dict):
-            # 如果是字典格式的上下文，进行参数替换
-            try:
-                task_description = task_description.format(**context)
-            except KeyError:
-                # 如果缺少某些参数，保持原样
-                pass
-        elif context and isinstance(context, str):
-            # 如果是字符串格式的上下文，尝试解析为字典
-            try:
-                import ast
-                context_dict = ast.literal_eval(context)
-                if isinstance(context_dict, dict):
-                    task_description = task_description.format(**context_dict)
-            except:
-                # 解析失败，保持原样
-                pass
-        
-        # 直接修改task的description，而不是设置prompt
-        task.description = task_description
-        
-        task_prompt = task.prompt()
-        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        role = self.role
-        task_name = getattr(task, 'name', 'unknown')
-        # 控制台打印输入
-        print(f"\n================ LLM调用日志 ================")
-        print(f"[{now}] 角色: {role} 任务: {task_name}")
-        print(f"【输入Prompt】\n{task_prompt}")
-        if context:
-            print(f"【上下文】\n{context}")
-        sys.stdout.flush()
-        # 调用原始Agent逻辑
-        result = super().execute_task(task, context, tools)
-        # 控制台打印输出
-        print(f"【输出Result】\n{result}")
-        print(f"============================================\n")
-        sys.stdout.flush()
-        # 日志落盘
-        if self._project_dir:
-            log_path = os.path.join(self._project_dir, 'llm_log.txt')
-            with open(log_path, 'a', encoding='utf-8') as f:
-                f.write(f"[{now}] 角色: {role} 任务: {task_name}\n")
-                f.write(f"【输入Prompt】\n{task_prompt}\n")
-                if context:
-                    f.write(f"【上下文】\n{context}\n")
-                f.write(f"【输出Result】\n{result}\n")
-                f.write(f"--------------------------------------------\n")
-        # === 自动产出落盘机制 ===
-        if self._project_dir and isinstance(self._project_dir, str) and self._project_dir.strip() != "" and task_name:
-            project_dir: str = self._project_dir
-            name_map = {
-                'requirement_analysis': '需求分析.md',
-                'technical_design': '技术设计.md',
-                'ui_design': 'UI设计.md',
-                'algorithm_design': '算法设计.md',
-                'frontend_development': 'frontend/前端开发.md',
-                'backend_development': 'backend/后端开发.md',
-                'data_analysis': '数据分析报告.md',
-                'testing': '测试报告.md',
-                'deployment': '部署文档.md',
-                'documentation': '项目文档.md',
-                'acceptance': '项目验收报告.md',
-            }
-            out_file = name_map.get(task_name, f'{task_name}.md')
-            if out_file and isinstance(out_file, str):
-                out_path = os.path.join(project_dir, out_file)
-                os.makedirs(os.path.dirname(out_path), exist_ok=True)
-                if 'Dockerfile' in result:
-                    dockerfile_path = os.path.join(project_dir, 'Dockerfile')
-                    docker_content = self._extract_block(result, 'Dockerfile')
-                    if docker_content:
-                        with open(dockerfile_path, 'w', encoding='utf-8') as f:
-                            f.write(docker_content.strip() + '\n')
-                self._extract_and_write_code_blocks(result)
-                with open(out_path, 'w', encoding='utf-8') as f:
-                    f.write(result.strip() + '\n')
-        return result
+        """重写execute_task方法，添加代码落地机制"""
+        try:
+            # 执行原始任务
+            result = super().execute_task(task, context, tools)
+            
+            # 代码落地机制：自动提取并保存代码块
+            if result and self._project_dir:
+                self._extract_and_save_code(result, task.name)
+            
+            return result
+        except Exception as e:
+            print(f"[LoggingAgent] 任务执行异常: {e}")
+            return f"任务执行失败: {str(e)}"
 
-    def _extract_block(self, text, block_name):
-        """提取如```Dockerfile ...```或```block_name ...```的内容"""
+    def _extract_and_save_code(self, result: str, task_name: str):
+        """从结果中提取代码块并保存到文件"""
         import re
-        pattern = rf'```{block_name}([\s\S]*?)```'
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            return match.group(1)
-        return None
+        
+        # 提取代码块的正则表达式
+        code_patterns = [
+            r'```(\w+)\n(.*?)```',  # ```python\ncode``` 格式
+            r'```\n(.*?)```',       # ```\ncode``` 格式
+            r'`([^`]+)`',           # `code` 格式
+        ]
+        
+        extracted_files = []
+        
+        for pattern in code_patterns:
+            matches = re.findall(pattern, result, re.DOTALL)
+            for i, match in enumerate(matches):
+                if isinstance(match, tuple):
+                    lang, code = match
+                else:
+                    lang, code = '', match
+                
+                # 根据语言和任务名生成文件名
+                filename = self._generate_filename(task_name, lang, i)
+                if filename:
+                    try:
+                        file_path = os.path.join(self._project_dir, filename)
+                        
+                        # 确保目录存在
+                        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                        
+                        # 写入文件
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            f.write(code.strip())
+                        
+                        extracted_files.append(filename)
+                        print(f"[代码落地] 已保存: {filename}")
+                        
+                    except Exception as e:
+                        print(f"[代码落地] 保存文件失败 {filename}: {e}")
+        
+        if extracted_files:
+            print(f"[代码落地] 任务 {task_name} 共提取 {len(extracted_files)} 个文件: {', '.join(extracted_files)}")
 
-    def _extract_and_write_code_blocks(self, text):
-        """自动提取并写入代码块到对应文件"""
-        import re
-        code_blocks = re.findall(r'```(\w+)?\n([\s\S]*?)```', text)
-        for lang, code in code_blocks:
-            ext_map = {
-                'python': '.py', 'js': '.js', 'javascript': '.js', 'ts': '.ts', 'java': '.java',
-                'go': '.go', 'c': '.c', 'cpp': '.cpp', 'html': '.html', 'css': '.css',
-                'sh': '.sh', 'bash': '.sh', 'Dockerfile': 'Dockerfile',
+    def _generate_filename(self, task_name: str, lang: str, index: int) -> str:
+        """根据任务名和语言生成文件名"""
+        # 任务名到文件名的映射
+        task_file_mapping = {
+            'frontend_development': {
+                'javascript': 'frontend/app.js',
+                'html': 'frontend/index.html',
+                'css': 'frontend/styles.css',
+                'vue': 'frontend/App.vue',
+                'react': 'frontend/App.jsx',
+                '': 'frontend/main.js'
+            },
+            'backend_development': {
+                'python': 'backend/main.py',
+                'java': 'backend/Main.java',
+                'javascript': 'backend/server.js',
+                'go': 'backend/main.go',
+                '': 'backend/app.py'
+            },
+            'technical_design': {
+                'yaml': 'docker-compose.yml',
+                'dockerfile': 'Dockerfile',
+                'sql': 'database/schema.sql',
+                'json': 'config.json',
+                '': 'design.md'
+            },
+            'requirement_analysis': {
+                'markdown': 'docs/requirements.md',
+                '': 'requirements.txt'
             }
-            ext = ext_map.get(lang.lower(), '.txt') if lang else '.txt'
-            # 文件名自动递增防止覆盖
-            base = lang if lang else 'code'
-            idx = 1
-            while True:
-                fname = f'{base}_{idx}{ext}' if ext != 'Dockerfile' else 'Dockerfile'
-                fpath = os.path.join(self._project_dir, fname)
-                if not os.path.exists(fpath):
-                    break
-                idx += 1
-            # Dockerfile 特殊处理
-            if ext == 'Dockerfile':
-                fpath = os.path.join(self._project_dir, 'Dockerfile')
-            os.makedirs(os.path.dirname(fpath), exist_ok=True)
-            with open(fpath, 'w', encoding='utf-8') as f:
-                f.write(code.strip() + '\n')
+        }
+        
+        # 获取映射
+        mapping = task_file_mapping.get(task_name, {})
+        
+        # 根据语言选择文件名
+        if lang in mapping:
+            return mapping[lang]
+        elif '' in mapping:
+            return mapping['']
+        else:
+            # 默认文件名
+            if lang:
+                return f"{task_name}_{index}.{lang}"
+            else:
+                return f"{task_name}_{index}.txt"
 
 # 角色定义 - 优化提示词，增加更多专业角色
 AGENTS = {
@@ -437,39 +424,160 @@ TASKS = [
     ),
 ]
 
-def multi_agent_discussion(stage_name: str, agents: List[Agent], initial_input: str, project_dir: str, rounds: int = 3) -> str:
+def multi_agent_discussion(stage_name: str, agents: List[Agent], context: Dict[str, Any], max_rounds: int = 2) -> str:
     """
-    多角色多轮对话，最终由最后一个Agent汇总共识。
-    :param stage_name: 阶段名（如需求分析）
-    :param agents: 参与角色列表
-    :param initial_input: 初始输入（如需求）
-    :param project_dir: 产出目录
-    :param rounds: 对话轮数
-    :return: 共识产出
+    多Agent多轮讨论，产出共识文档
+    优化版本：添加Token优化和上下文管理
     """
-    context = initial_input
+    print(f"[多Agent讨论] 开始 {stage_name} 阶段，参与Agent: {[a.role for a in agents]}")
+    
+    # 上下文缓存，避免重复内容
+    context_cache = {}
     discussion_log = []
-    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    for r in range(rounds):
+    
+    # 第一轮：各Agent独立发言
+    print(f"[多Agent讨论] 第一轮：各Agent独立发言")
+    for agent in agents:
+        try:
+            # 构建精简的上下文，只包含关键信息
+            simplified_context = {
+                'project_id': context.get('project_id', ''),
+                'project_dir': context.get('project_dir', ''),
+                'requirements': context.get('requirements', ''),
+                'stage': stage_name
+            }
+            
+            # 检查是否有缓存的上下文
+            context_key = f"{agent.role}_{stage_name}"
+            if context_key in context_cache:
+                simplified_context.update(context_cache[context_key])
+            
+            prompt = f"""作为{agent.role}，请针对{stage_name}阶段发表你的专业观点：
+
+项目需求：{context.get('requirements', '')}
+当前阶段：{stage_name}
+
+请从你的专业角度提供：
+1. 关键考虑点
+2. 技术建议
+3. 潜在风险
+4. 实施建议
+
+请简洁明了地表达，避免重复已有内容。
+"""
+            
+            task = Task(
+                name=f"{stage_name}_discussion_round1_{agent.role}",
+                description=prompt,
+                expected_output="请提供你的专业观点和建议。",
+                agent=agent
+            )
+            
+            result = agent.execute_task(task, context=str(simplified_context))
+            discussion_log.append(f"=== {agent.role} 观点 ===\n{result}")
+            
+            # 缓存上下文
+            context_cache[context_key] = {'last_output': result}
+            
+        except Exception as e:
+            print(f"[多Agent讨论] {agent.role} 发言异常: {e}")
+            discussion_log.append(f"=== {agent.role} 发言异常: {e} ===")
+    
+    # 第二轮：基于第一轮结果进行讨论
+    if max_rounds > 1:
+        print(f"[多Agent讨论] 第二轮：基于第一轮结果讨论")
+        
+        # 汇总第一轮观点
+        summary = "\n".join(discussion_log[-len(agents):])
+        
         for agent in agents:
-            prompt = f"【阶段】{stage_name} 第{r+1}轮\n【当前上下文】\n{context}\n请以你的身份补充、提问、质疑或确认。"
-            result = agent.execute_task(Task(name=f"{stage_name}_discussion_round{r+1}_{agent.role}", description=prompt, expected_output="请补充你的观点/建议/问题/确认。", agent=agent), context=context)
-            discussion_log.append(f"[{now}] {agent.role} 第{r+1}轮: {result}")
-            context += f"\n{agent.role}：{result}"
-    # 最后由最后一个Agent汇总共识
-    summary_prompt = f"【阶段】{stage_name}共识汇总\n【全部对话】\n{context}\n请以你的身份对本阶段进行总结，输出最终共识文档。"
-    consensus = agents[-1].execute_task(Task(name=f"{stage_name}_consensus", description=summary_prompt, expected_output="请输出最终共识文档。", agent=agents[-1]), context=context)
-    # 写入对话日志
-    if project_dir:
-        log_path = os.path.join(project_dir, f"{stage_name}_discussion_log.txt")
-        with open(log_path, 'w', encoding='utf-8') as f:
-            for line in discussion_log:
-                f.write(line + '\n')
-        # 共识产出也写入主产出文件
-        consensus_path = os.path.join(project_dir, f"{stage_name}_共识文档.md")
-        with open(consensus_path, 'w', encoding='utf-8') as f:
-            f.write(consensus.strip() + '\n')
-    return consensus
+            try:
+                prompt = f"""基于第一轮讨论结果，作为{agent.role}，请：
+
+1. 分析其他角色的观点
+2. 提出补充或修正建议
+3. 确认共识点
+4. 指出需要进一步讨论的问题
+
+第一轮讨论摘要：
+{summary}
+
+请重点关注需要协调和达成共识的部分。
+"""
+                
+                task = Task(
+                    name=f"{stage_name}_discussion_round2_{agent.role}",
+                    description=prompt,
+                    expected_output="请提供你的分析和建议。",
+                    agent=agent
+                )
+                
+                result = agent.execute_task(task, context=f"第一轮摘要: {summary}")
+                discussion_log.append(f"=== {agent.role} 第二轮观点 ===\n{result}")
+                
+            except Exception as e:
+                print(f"[多Agent讨论] {agent.role} 第二轮发言异常: {e}")
+                discussion_log.append(f"=== {agent.role} 第二轮发言异常: {e} ===")
+    
+    # 最终汇总：指定Agent生成共识文档
+    print(f"[多Agent讨论] 生成共识文档")
+    try:
+        # 选择最适合的Agent进行汇总
+        summary_agent = None
+        if stage_name in ['requirement_analysis', 'technical_design']:
+            summary_agent = next((a for a in agents if a.role == '技术总监'), agents[0])
+        elif stage_name in ['frontend_development', 'backend_development']:
+            summary_agent = next((a for a in agents if a.role in ['前端开发工程师', '后端开发工程师']), agents[0])
+        else:
+            summary_agent = agents[0]
+        
+        consensus_prompt = f"""基于多轮讨论，请生成{stage_name}阶段的共识文档：
+
+讨论记录：
+{chr(10).join(discussion_log)}
+
+请生成一份结构化的共识文档，包含：
+1. 阶段目标
+2. 关键决策
+3. 技术方案
+4. 实施计划
+5. 风险控制
+
+格式要求：Markdown格式，结构清晰，内容具体可执行。
+"""
+        
+        consensus_task = Task(
+            name=f"{stage_name}_consensus",
+            description=consensus_prompt,
+            expected_output="请生成结构化的共识文档。",
+            agent=summary_agent
+        )
+        
+        consensus_result = summary_agent.execute_task(consensus_task, context=f"讨论记录: {chr(10).join(discussion_log)}")
+        
+        # 保存讨论日志和共识文档
+        discussion_log_path = os.path.join(context.get('project_dir', ''), f'{stage_name}_discussion_log.txt')
+        consensus_path = os.path.join(context.get('project_dir', ''), f'{stage_name}_共识文档.md')
+        
+        try:
+            with open(discussion_log_path, 'w', encoding='utf-8') as f:
+                f.write(f"# {stage_name} 阶段讨论日志\n\n")
+                f.write(chr(10).join(discussion_log))
+            
+            with open(consensus_path, 'w', encoding='utf-8') as f:
+                f.write(consensus_result)
+                
+            print(f"[多Agent讨论] 讨论日志已保存: {discussion_log_path}")
+            print(f"[多Agent讨论] 共识文档已保存: {consensus_path}")
+            
+        except Exception as e:
+            print(f"[多Agent讨论] 保存文件异常: {e}")
+        
+        return consensus_result
+        
+    except Exception as e:
+        print(f"[多Agent讨论] 生成共识文档异常: {e}")
+        return f"共识文档生成失败: {e}\n讨论记录:\n{chr(10).join(discussion_log)}"
 
 def run_command_with_log(cmd, cwd, log_path):
     """在指定目录下执行命令，捕获stdout/stderr并写入日志，返回(exitcode, stdout, stderr)"""
@@ -505,14 +613,17 @@ class AiTeamCrew:
     def auto_execute_and_fix(self, project_dir, file_to_run, agent_list, run_type='python', custom_cmd=None, use_mcp=False, max_retry=3):
         """
         支持多执行类型、MCP远程执行、日志摘要与多Agent修正。
-        agent_list: 参与修正的Agent列表（如[开发, 测试, 运维]）
-        run_type: python/shell/npm/pytest/docker/custom
-        custom_cmd: 自定义命令
-        use_mcp: 是否优先用MCP远程执行
+        优化版本：添加智能重试策略、循环检测和详细错误分析
         """
         log_path = os.path.join(project_dir, 'auto_exec_log.txt')
         mcp = MCPServer(workspace_path=project_dir) if use_mcp else None
+        
+        # 记录执行历史，防止循环
+        execution_history = []
+        
         for attempt in range(1, max_retry+1):
+            print(f"[自动执行] 第 {attempt}/{max_retry} 次尝试，类型: {run_type}")
+            
             # 1. 构造命令
             if run_type == 'python':
                 cmd = f'python {file_to_run}'
@@ -527,48 +638,156 @@ class AiTeamCrew:
             elif run_type == 'custom' and custom_cmd:
                 cmd = custom_cmd
             else:
+                print(f"[自动执行] 不支持的执行类型: {run_type}")
                 return False
-            # 2. 执行命令
-            if use_mcp and mcp:
-                if run_type == 'python' or run_type == 'shell' or run_type == 'pytest':
-                    result = mcp.execute_code(os.path.join(project_dir, file_to_run))
-                    exitcode = getattr(result, 'exit_code', 1)
-                    out = getattr(result, 'output', '')
-                    err = getattr(result, 'error', '')
-                    logs = out + '\n' + err
-                elif run_type == 'docker':
-                    image_name = f"{os.path.basename(project_dir)}:latest"
-                    build_result = mcp.build_docker_image(project_dir, image_name)
-                    logs = getattr(build_result, 'logs', '')
-                    if not build_result.success:
-                        exitcode = 1
-                        out = ''
-                        err = build_result.message
+                
+            # 2. 检查是否重复执行相同命令
+            if cmd in execution_history:
+                print(f"[自动执行] 检测到重复命令，跳过: {cmd}")
+                continue
+            execution_history.append(cmd)
+            
+            # 3. 执行命令
+            try:
+                if use_mcp and mcp:
+                    if run_type in ['python', 'shell', 'pytest']:
+                        result = mcp.execute_code(os.path.join(project_dir, file_to_run))
+                        exitcode = getattr(result, 'exit_code', 1)
+                        out = getattr(result, 'output', '')
+                        err = getattr(result, 'error', '')
+                        logs = out + '\n' + err
+                    elif run_type == 'docker':
+                        # 使用智能Docker名称处理
+                        project_name = os.path.basename(project_dir)
+                        safe_name = mcp._normalize_project_name(project_name) if hasattr(mcp, '_normalize_project_name') else project_name.replace(' ', '_')
+                        image_name = f"{safe_name}:latest"
+                        print(f"[Docker] 使用安全镜像名: {image_name}")
+                        
+                        build_result = mcp.build_docker_image(project_dir, image_name)
+                        logs = getattr(build_result, 'logs', '')
+                        if not build_result.success:
+                            exitcode = 1
+                            out = ''
+                            err = build_result.message
+                        else:
+                            run_result = mcp.run_docker_container(image_name, f"{safe_name}-container")
+                            logs += '\n' + getattr(run_result, 'logs', '')
+                            exitcode = 0 if run_result.success else 1
+                            out = run_result.logs
+                            err = run_result.message if not run_result.success else ''
                     else:
-                        run_result = mcp.run_docker_container(image_name, f"{os.path.basename(project_dir)}-container")
-                        logs += '\n' + getattr(run_result, 'logs', '')
-                        exitcode = 0 if run_result.success else 1
-                        out = run_result.logs
-                        err = run_result.message if not run_result.success else ''
-                else:
-                    # 其它类型暂不支持MCP
-                    exitcode, out, err, logs = 1, '', 'MCP暂不支持该类型', 'MCP暂不支持该类型'
-            else:
-                exitcode, out, err = run_command_with_log(cmd, project_dir, log_path)
-                logs = out + '\n' + err
-            # 3. 日志归档
+                        exitcode, out, err = run_command_with_log(cmd, project_dir, log_path)
+                        logs = out + '\n' + err
+                    
+            except Exception as e:
+                exitcode, out, err, logs = 1, '', str(e), str(e)
+                print(f"[自动执行] 执行异常: {e}")
+            
+            # 4. 日志归档
             with open(log_path, 'a', encoding='utf-8') as f:
                 f.write(f"[SUMMARY_ATTEMPT_{attempt}]\n{extract_error_summary(logs)}\n")
-            # 4. 成功则返回
+            
+            # 5. 成功则返回
             if exitcode == 0:
+                print(f"[自动执行] 执行成功！")
                 return True
-            # 5. 失败时多Agent多轮修正
+                
+            # 6. 失败时智能分析和修正
+            print(f"[自动执行] 执行失败 (退出码: {exitcode})")
             summary = extract_error_summary(logs)
-            fix_prompt = f"自动执行命令失败，日志摘要如下：\n{summary}\n请修正产出，确保下次执行通过。"
-            for agent in agent_list:
-                fix_task = Task(name=f"auto_fix_{run_type}_attempt{attempt}", description=fix_prompt, expected_output="请修正产出代码/配置。", agent=agent)
-                agent.execute_task(fix_task, context=fix_prompt, tools=agent.tools)
+            
+            # 智能错误分析
+            error_analysis = self._analyze_error(summary, run_type, attempt)
+            
+            # 构建更智能的修正提示
+            fix_prompt = f"""自动执行命令失败，详细分析如下：
+
+执行命令: {cmd}
+退出码: {exitcode}
+错误类型: {error_analysis['type']}
+错误原因: {error_analysis['reason']}
+错误摘要: {summary}
+
+修正建议: {error_analysis['suggestion']}
+
+请根据以上分析，修正产出代码/配置，确保下次执行通过。
+"""
+            
+            print(f"[自动执行] 开始修正，错误类型: {error_analysis['type']}")
+            
+            # 7. 多Agent修正（限制修正时间）
+            for i, agent in enumerate(agent_list):
+                if i >= 2:  # 最多2个Agent参与修正
+                    break
+                    
+                try:
+                    fix_task = Task(
+                        name=f"auto_fix_{run_type}_attempt{attempt}_agent{i+1}", 
+                        description=fix_prompt, 
+                        expected_output="请提供具体的修正代码或配置修改。", 
+                        agent=agent
+                    )
+                    result = agent.execute_task(fix_task, context=fix_prompt, tools=agent.tools)
+                    print(f"[自动执行] {agent.role} 修正完成")
+                except Exception as e:
+                    print(f"[自动执行] {agent.role} 修正异常: {e}")
+                    
+        print(f"[自动执行] 所有重试失败，最终退出")
         return False
+
+    def _analyze_error(self, error_summary: str, run_type: str, attempt: int) -> dict:
+        """智能分析错误类型和原因"""
+        error_lower = error_summary.lower()
+        
+        # 错误类型识别
+        if 'docker' in error_lower and 'invalid' in error_lower:
+            return {
+                'type': 'Docker名称格式错误',
+                'reason': 'Docker镜像或容器名称包含非法字符',
+                'suggestion': '检查项目名称，确保只包含字母、数字、下划线、连字符和点号'
+            }
+        elif 'mcp' in error_lower and '不支持' in error_lower:
+            return {
+                'type': 'MCP工具不支持',
+                'reason': f'MCP工具不支持 {run_type} 类型的执行',
+                'suggestion': f'考虑使用本地执行或切换到MCP支持的类型'
+            }
+        elif 'permission' in error_lower or 'denied' in error_lower:
+            return {
+                'type': '权限不足',
+                'reason': '执行权限被拒绝',
+                'suggestion': '检查文件权限，确保有执行权限'
+            }
+        elif 'not found' in error_lower or '不存在' in error_lower:
+            return {
+                'type': '文件不存在',
+                'reason': '要执行的文件或依赖不存在',
+                'suggestion': '检查文件路径和依赖安装'
+            }
+        elif 'syntax' in error_lower or '语法' in error_lower:
+            return {
+                'type': '语法错误',
+                'reason': '代码存在语法错误',
+                'suggestion': '检查代码语法，修复语法错误'
+            }
+        elif 'import' in error_lower or 'module' in error_lower:
+            return {
+                'type': '依赖缺失',
+                'reason': '缺少必要的依赖模块',
+                'suggestion': '安装缺失的依赖包'
+            }
+        elif attempt >= 2:
+            return {
+                'type': '多次重试失败',
+                'reason': f'已经重试 {attempt} 次仍然失败',
+                'suggestion': '检查系统环境配置，可能需要手动干预'
+            }
+        else:
+            return {
+                'type': '未知错误',
+                'reason': '无法识别的错误类型',
+                'suggestion': '查看详细错误日志，手动分析问题'
+            }
 
     def kickoff(self, inputs, resume_from: Optional[str] = None):
         """
@@ -603,9 +822,8 @@ class AiTeamCrew:
             consensus = multi_agent_discussion(
                 stage_name="需求分析",
                 agents=[AGENTS["boss"], AGENTS["product_manager"], AGENTS["tech_lead"]],
-                initial_input=initial_input,
-                project_dir=project_dir,
-                rounds=3
+                context=context,
+                max_rounds=2
             )
             results["requirement_analysis"] = consensus
             context["requirement_analysis_result"] = consensus
@@ -621,9 +839,8 @@ class AiTeamCrew:
             consensus = multi_agent_discussion(
                 stage_name="技术设计",
                 agents=[AGENTS["tech_lead"], AGENTS["product_manager"], AGENTS["frontend_dev"], AGENTS["backend_dev"]],
-                initial_input=context["requirement_analysis_result"],
-                project_dir=project_dir,
-                rounds=3
+                context=context,
+                max_rounds=2
             )
             results["technical_design"] = consensus
             context["technical_design_result"] = consensus
@@ -655,9 +872,8 @@ class AiTeamCrew:
             consensus = multi_agent_discussion(
                 stage_name="前端开发",
                 agents=[AGENTS["frontend_dev"], AGENTS["ui_designer"], AGENTS["tech_lead"]],
-                initial_input=context["ui_design_result"],
-                project_dir=project_dir,
-                rounds=2
+                context=context,
+                max_rounds=2
             )
             results["frontend_development"] = consensus
             context["frontend_development_result"] = consensus
@@ -689,9 +905,8 @@ class AiTeamCrew:
             consensus = multi_agent_discussion(
                 stage_name="后端开发",
                 agents=[AGENTS["backend_dev"], AGENTS["tech_lead"], AGENTS["product_manager"]],
-                initial_input=context["technical_design_result"],
-                project_dir=project_dir,
-                rounds=2
+                context=context,
+                max_rounds=2
             )
             results["backend_development"] = consensus
             context["backend_development_result"] = consensus
@@ -740,15 +955,8 @@ class AiTeamCrew:
             consensus = multi_agent_discussion(
                 stage_name="验收",
                 agents=[AGENTS["boss"], AGENTS["product_manager"], AGENTS["qa_engineer"], AGENTS["frontend_dev"], AGENTS["backend_dev"]],
-                initial_input="\n".join([
-                    context.get("requirement_analysis_result", ""),
-                    context.get("technical_design_result", ""),
-                    context.get("frontend_development_result", ""),
-                    context.get("backend_development_result", ""),
-                    context.get("testing_result", "")
-                ]),
-                project_dir=project_dir,
-                rounds=2
+                context=context,
+                max_rounds=2
             )
             results["acceptance"] = consensus
             context["acceptance_result"] = consensus

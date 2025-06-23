@@ -1,0 +1,14 @@
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    role VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE leave_requests (
+    id SERIAL PRIMARY KEY,
+    employee_id INTEGER REFERENCES users(id),
+    reason TEXT NOT NULL,
+    start_date TIMESTAMP NOT NULL,
+    end_date TIMESTAMP NOT NULL,
+    status VARCHAR(20) DEFAULT 'pending'
+);
