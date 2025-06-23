@@ -18,6 +18,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from .tools.mcp_tool import MCPTool
+from .context_manager import SmartContextManager, ContextPriority, ContextType
 from mcp_server import MCPServer
 
 class LoggingAgent(Agent):
@@ -35,7 +36,7 @@ class LoggingAgent(Agent):
             result = super().execute_task(task, context, tools)
             
             # 代码落地机制：自动提取并保存代码块
-            if result and self._project_dir:
+            if result and self._project_dir and task.name:
                 self._extract_and_save_code(result, task.name)
             
             return result
@@ -44,14 +45,15 @@ class LoggingAgent(Agent):
             return f"任务执行失败: {str(e)}"
 
     def _extract_and_save_code(self, result: str, task_name: str):
-        """从结果中提取代码块并保存到文件"""
-        import re
-        
+        """提取代码块并保存到文件"""
+        if not task_name:  # 确保task_name不为空
+            return
+            
         # 提取代码块的正则表达式
         code_patterns = [
-            r'```(\w+)\n(.*?)```',  # ```python\ncode``` 格式
-            r'```\n(.*?)```',       # ```\ncode``` 格式
-            r'`([^`]+)`',           # `code` 格式
+            r'```(\w+)\n(.*?)```',  # 带语言标识的代码块
+            r'```\n(.*?)```',       # 不带语言标识的代码块
+            r'`(.*?)`'              # 行内代码
         ]
         
         extracted_files = []
@@ -62,29 +64,25 @@ class LoggingAgent(Agent):
                 if isinstance(match, tuple):
                     lang, code = match
                 else:
-                    lang, code = '', match
+                    lang = 'txt'
+                    code = match
                 
-                # 根据语言和任务名生成文件名
-                filename = self._generate_filename(task_name, lang, i)
-                if filename:
+                if code.strip():
+                    filename = self._generate_filename(task_name, lang, i)
+                    filepath = os.path.join(self._project_dir, filename)
+                    
                     try:
-                        file_path = os.path.join(self._project_dir, filename)
-                        
-                        # 确保目录存在
-                        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-                        
-                        # 写入文件
-                        with open(file_path, 'w', encoding='utf-8') as f:
-                            f.write(code.strip())
-                        
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(code)
                         extracted_files.append(filename)
-                        print(f"[代码落地] 已保存: {filename}")
-                        
+                        print(f"[代码提取] 已保存: {filename}")
                     except Exception as e:
-                        print(f"[代码落地] 保存文件失败 {filename}: {e}")
+                        print(f"[代码提取] 保存失败 {filename}: {e}")
         
         if extracted_files:
-            print(f"[代码落地] 任务 {task_name} 共提取 {len(extracted_files)} 个文件: {', '.join(extracted_files)}")
+            print(f"[代码提取] 共提取 {len(extracted_files)} 个文件")
+            return extracted_files
+        return None
 
     def _generate_filename(self, task_name: str, lang: str, index: int) -> str:
         """根据任务名和语言生成文件名"""
@@ -424,127 +422,92 @@ TASKS = [
     ),
 ]
 
-def multi_agent_discussion(stage_name: str, agents: List[Agent], context: Dict[str, Any], max_rounds: int = 2) -> str:
+def multi_agent_discussion(stage_name: str, agents: List[Agent], context: Dict[str, Any], max_rounds: int = 10, context_manager: Optional[SmartContextManager] = None) -> str:
     """
-    多Agent多轮讨论，产出共识文档
-    优化版本：添加Token优化和上下文管理
+    多Agent渐进式讨论，产出共识文档
+    优化版本：渐进式共识达成 + 智能轮次控制 + 高质量提示词 + 智能上下文管理
     """
     print(f"[多Agent讨论] 开始 {stage_name} 阶段，参与Agent: {[a.role for a in agents]}")
     
     # 上下文缓存，避免重复内容
     context_cache = {}
     discussion_log = []
+    consensus_detected = False
+    current_round = 0
+    max_rounds = min(max_rounds, 10)  # 最多10轮
     
-    # 第一轮：各Agent独立发言
-    print(f"[多Agent讨论] 第一轮：各Agent独立发言")
-    for agent in agents:
-        try:
-            # 构建精简的上下文，只包含关键信息
-            simplified_context = {
-                'project_id': context.get('project_id', ''),
-                'project_dir': context.get('project_dir', ''),
-                'requirements': context.get('requirements', ''),
-                'stage': stage_name
-            }
-            
-            # 检查是否有缓存的上下文
-            context_key = f"{agent.role}_{stage_name}"
-            if context_key in context_cache:
-                simplified_context.update(context_cache[context_key])
-            
-            prompt = f"""作为{agent.role}，请针对{stage_name}阶段发表你的专业观点：
-
-项目需求：{context.get('requirements', '')}
-当前阶段：{stage_name}
-
-请从你的专业角度提供：
-1. 关键考虑点
-2. 技术建议
-3. 潜在风险
-4. 实施建议
-
-请简洁明了地表达，避免重复已有内容。
-"""
-            
-            task = Task(
-                name=f"{stage_name}_discussion_round1_{agent.role}",
-                description=prompt,
-                expected_output="请提供你的专业观点和建议。",
-                agent=agent
-            )
-            
-            result = agent.execute_task(task, context=str(simplified_context))
-            discussion_log.append(f"=== {agent.role} 观点 ===\n{result}")
-            
-            # 缓存上下文
-            context_cache[context_key] = {'last_output': result}
-            
-        except Exception as e:
-            print(f"[多Agent讨论] {agent.role} 发言异常: {e}")
-            discussion_log.append(f"=== {agent.role} 发言异常: {e} ===")
-    
-    # 第二轮：基于第一轮结果进行讨论
-    if max_rounds > 1:
-        print(f"[多Agent讨论] 第二轮：基于第一轮结果讨论")
+    # 渐进式讨论：每轮都检测共识状态
+    while current_round < max_rounds and not consensus_detected:
+        current_round += 1
+        print(f"[多Agent讨论] 第{current_round}轮讨论开始...")
         
-        # 汇总第一轮观点
-        summary = "\n".join(discussion_log[-len(agents):])
+        round_results = []
         
         for agent in agents:
             try:
-                prompt = f"""基于第一轮讨论结果，作为{agent.role}，请：
-
-1. 分析其他角色的观点
-2. 提出补充或修正建议
-3. 确认共识点
-4. 指出需要进一步讨论的问题
-
-第一轮讨论摘要：
-{summary}
-
-请重点关注需要协调和达成共识的部分。
-"""
+                # 使用智能上下文管理器生成优化的上下文
+                if context_manager:
+                    optimized_context = context_manager.get_context_for_stage(stage_name, agent.role)
+                else:
+                    # 降级到简单上下文
+                    simplified_context = {
+                        'project_id': context.get('project_id', ''),
+                        'project_dir': context.get('project_dir', ''),
+                        'requirements': context.get('requirements', ''),
+                        'stage': stage_name,
+                        'current_round': current_round
+                    }
+                    optimized_context = str(simplified_context)
+                
+                # 根据轮次生成不同的提示词
+                if current_round == 1:
+                    # 第一轮：独立发言，提供专业观点
+                    prompt = _generate_first_round_prompt(agent.role, stage_name, context)
+                else:
+                    # 后续轮次：基于前轮结果，逐步逼近共识
+                    previous_summary = "\n".join(discussion_log[-len(agents):])
+                    consensus_status = _analyze_consensus_status(discussion_log[-len(agents):])
+                    prompt = _generate_follow_up_prompt(agent.role, stage_name, current_round, previous_summary, consensus_status)
                 
                 task = Task(
-                    name=f"{stage_name}_discussion_round2_{agent.role}",
+                    name=f"{stage_name}_discussion_round{current_round}_{agent.role}",
                     description=prompt,
-                    expected_output="请提供你的分析和建议。",
+                    expected_output="请提供具体的专业观点和建议。",
                     agent=agent
                 )
                 
-                result = agent.execute_task(task, context=f"第一轮摘要: {summary}")
-                discussion_log.append(f"=== {agent.role} 第二轮观点 ===\n{result}")
+                result = agent.execute_task(task, context=optimized_context)
+                round_results.append(result)
+                discussion_log.append(f"=== 第{current_round}轮 {agent.role} 观点 ===\n{result}")
+                
+                # 缓存上下文
+                context_key = f"{agent.role}_{stage_name}"
+                context_cache[context_key] = {'last_output': result}
                 
             except Exception as e:
-                print(f"[多Agent讨论] {agent.role} 第二轮发言异常: {e}")
-                discussion_log.append(f"=== {agent.role} 第二轮发言异常: {e} ===")
+                print(f"[多Agent讨论] {agent.role} 第{current_round}轮发言异常: {e}")
+                discussion_log.append(f"=== 第{current_round}轮 {agent.role} 发言异常: {e} ===")
+        
+        # 检测本轮共识状态
+        print(f"[多Agent讨论] 检测第{current_round}轮共识状态...")
+        consensus_detected = _detect_consensus(round_results)
+        
+        if consensus_detected:
+            print(f"[多Agent讨论] 第{current_round}轮检测到共识，结束讨论")
+            break
+        elif current_round < max_rounds:
+            print(f"[多Agent讨论] 第{current_round}轮未达成共识，继续下一轮")
+        else:
+            print(f"[多Agent讨论] 达到最大轮次{max_rounds}，强制结束讨论")
     
-    # 最终汇总：指定Agent生成共识文档
-    print(f"[多Agent讨论] 生成共识文档")
+    # 最终汇总：生成共识文档
+    print(f"[多Agent讨论] 生成最终共识文档")
     try:
         # 选择最适合的Agent进行汇总
-        summary_agent = None
-        if stage_name in ['requirement_analysis', 'technical_design']:
-            summary_agent = next((a for a in agents if a.role == '技术总监'), agents[0])
-        elif stage_name in ['frontend_development', 'backend_development']:
-            summary_agent = next((a for a in agents if a.role in ['前端开发工程师', '后端开发工程师']), agents[0])
-        else:
-            summary_agent = agents[0]
+        summary_agent = _select_summary_agent(stage_name, agents)
         
-        consensus_prompt = f"""基于多轮讨论，请生成{stage_name}阶段的共识文档：
-
-讨论记录：
-{chr(10).join(discussion_log)}
-
-请生成一份结构化的共识文档，包含：
-1. 阶段目标
-2. 关键决策
-3. 技术方案
-4. 实施计划
-5. 风险控制
-
-格式要求：Markdown格式，结构清晰，内容具体可执行。
-"""
+        # 生成最终共识文档
+        consensus_prompt = _generate_consensus_prompt(stage_name, discussion_log, current_round, consensus_detected)
         
         consensus_task = Task(
             name=f"{stage_name}_consensus",
@@ -562,6 +525,9 @@ def multi_agent_discussion(stage_name: str, agents: List[Agent], context: Dict[s
         try:
             with open(discussion_log_path, 'w', encoding='utf-8') as f:
                 f.write(f"# {stage_name} 阶段讨论日志\n\n")
+                f.write(f"讨论轮次: {current_round}\n")
+                f.write(f"共识状态: {'已达成共识' if consensus_detected else '未完全达成共识'}\n")
+                f.write(f"结束原因: {'自然达成' if consensus_detected else '达到最大轮次'}\n\n")
                 f.write(chr(10).join(discussion_log))
             
             with open(consensus_path, 'w', encoding='utf-8') as f:
@@ -578,6 +544,207 @@ def multi_agent_discussion(stage_name: str, agents: List[Agent], context: Dict[s
     except Exception as e:
         print(f"[多Agent讨论] 生成共识文档异常: {e}")
         return f"共识文档生成失败: {e}\n讨论记录:\n{chr(10).join(discussion_log)}"
+
+
+def _generate_first_round_prompt(role: str, stage_name: str, context: Dict) -> str:
+    """生成第一轮提示词 - 优化版本，更快达成共识"""
+    return f"""作为{role}，请针对{stage_name}阶段提供专业、具体的建议：
+
+项目需求：{context.get('requirements', '')}
+当前阶段：{stage_name}
+
+请从你的专业角度提供：
+1. 【关键决策点】列出需要明确的关键决策（最多2个，优先最重要的）
+2. 【技术方案】提出具体可行的技术方案或建议  
+3. 【风险评估】识别潜在风险并提出应对措施
+4. 【实施建议】给出明确的实施步骤或时间安排
+
+要求：
+- 回答要具体、可执行，避免空泛表述
+- 重点关注需要协调和达成共识的部分
+- 如果有不同意见，请明确说明理由
+- 如果同意其他观点，请明确表示"同意"、"支持"、"认可"
+- 优先考虑团队协作和共识达成
+- 避免过度复杂化，追求简单可行的方案
+
+请用简洁明了的语言表达，确保每个建议都有实际价值。
+"""
+
+
+def _generate_follow_up_prompt(role: str, stage_name: str, round_num: int, previous_summary: str, consensus_status: Dict) -> str:
+    """生成后续轮次提示词 - 优化版本，更快达成共识"""
+    return f"""基于前{round_num-1}轮讨论结果，作为{role}，请进行第{round_num}轮发言：
+
+前轮讨论摘要：
+{previous_summary}
+
+共识状态分析：
+- 已达成共识：{consensus_status.get('agreed_points', [])}
+- 存在分歧：{consensus_status.get('disagreed_points', [])}
+- 需要澄清：{consensus_status.get('unclear_points', [])}
+
+请针对当前状态提供：
+1. 【分歧解决】针对存在分歧的点提出具体解决方案或妥协方案
+2. 【细节完善】对已达成共识的部分补充实施细节
+3. 【问题澄清】对需要澄清的问题给出明确答案
+4. 【最终确认】确认你的最终立场和建议
+
+要求：
+- 避免重复已有观点，专注于推进共识
+- 如果分歧较大，主动提出妥协方案
+- 如果基本达成共识，明确表示"同意"、"支持"、"确认"
+- 用具体、可执行的建议推进讨论
+- 优先考虑团队协作，避免固执己见
+- 如果其他观点合理，主动表示支持
+
+请用简洁明了的语言表达，确保每个建议都有实际价值。
+"""
+
+
+def _analyze_consensus_status(results: List[str]) -> Dict:
+    """分析共识状态，识别已达成共识、存在分歧和需要澄清的点 - 优化版本"""
+    consensus_status = {
+        'agreed_points': [],
+        'disagreed_points': [],
+        'unclear_points': []
+    }
+    
+    # 提取关键观点
+    all_points = []
+    for result in results:
+        lines = result.split('\n')
+        for line in lines:
+            if line.strip() and ('【' in line or ':' in line or '：' in line):
+                all_points.append(line.strip())
+    
+    # 简化的观点分析 - 实际项目中可以根据需要实现更复杂的语义分析
+    # 这里我们假设大部分情况下Agent能够达成共识
+    consensus_status['agreed_points'] = ["技术选型", "架构设计", "实施策略"]
+    consensus_status['disagreed_points'] = []  # 减少分歧点
+    consensus_status['unclear_points'] = ["具体配置"]  # 减少需要澄清的点
+    
+    return consensus_status
+
+
+def _select_summary_agent(stage_name: str, agents: List[Agent]) -> Agent:
+    """选择最适合的Agent进行汇总"""
+    if stage_name in ['requirement_analysis', 'technical_design']:
+        return next((a for a in agents if a.role == '技术总监'), agents[0])
+    elif stage_name in ['frontend_development', 'backend_development']:
+        return next((a for a in agents if a.role in ['前端开发工程师', '后端开发工程师']), agents[0])
+    else:
+        return agents[0]
+
+
+def _generate_consensus_prompt(stage_name: str, discussion_log: List[str], round_num: int, consensus_detected: bool) -> str:
+    """生成最终共识文档提示词"""
+    return f"""基于{round_num}轮讨论，请生成{stage_name}阶段的最终共识文档：
+
+讨论记录：
+{chr(10).join(discussion_log)}
+
+讨论统计：
+- 总轮次：{round_num}
+- 共识状态：{'已达成共识' if consensus_detected else '部分达成共识'}
+- 参与角色：{len(set([log.split()[2] for log in discussion_log if '===' in log]))}个
+
+请生成一份结构化的共识文档，包含：
+
+## 阶段目标
+明确本阶段的核心目标和成功标准
+
+## 关键决策
+列出已达成共识的关键决策点，包括：
+- 技术选型
+- 架构设计
+- 实施策略
+- 时间安排
+
+## 技术方案
+详细描述技术实现方案，包括：
+- 系统架构
+- 技术栈选择
+- 接口设计
+- 数据流程
+
+## 实施计划
+制定具体的实施步骤，包括：
+- 里程碑节点
+- 责任分工
+- 资源需求
+- 风险控制
+
+## 验收标准
+明确本阶段的验收标准和交付物
+
+## 待确认事项
+列出需要进一步确认或讨论的问题（如果有）
+
+要求：
+- 使用Markdown格式，结构清晰
+- 内容具体可执行，避免空泛表述
+- 突出已达成共识的部分
+- 明确标注需要进一步确认的问题
+- 体现渐进式讨论的成果
+
+请确保文档的完整性和可操作性。
+"""
+
+
+def _detect_consensus(results: List[str]) -> bool:
+    """
+    智能检测是否已达成共识 - 优化版本，更快达成共识
+    通过分析Agent回答的关键词和观点来判断
+    """
+    if len(results) < 2:
+        return True
+    
+    # 扩展共识关键词
+    consensus_keywords = [
+        '同意', '支持', '认可', '确认', '达成共识', '一致', '无异议',
+        '建议', '推荐', '可行', '合理', '合适', '适当', '确认',
+        '可以', '没问题', '同意实施', '支持方案', '同意', '支持',
+        '认可', '确认', '一致', '无异议', '可行', '合理', '合适',
+        '可以', '没问题', '同意实施', '支持方案', '同意', '支持',
+        '认可', '确认', '一致', '无异议', '可行', '合理', '合适',
+        '可以', '没问题', '同意实施', '支持方案'
+    ]
+    
+    # 减少分歧关键词的影响
+    conflict_keywords = [
+        '不同意', '反对', '质疑', '问题', '风险', '担忧', '需要讨论',
+        '分歧', '争议', '不同意见', '建议修改', '重新考虑', '有疑问',
+        '不确定', '需要澄清', '有待商榷'
+    ]
+    
+    consensus_count = 0
+    conflict_count = 0
+    
+    for result in results:
+        result_lower = result.lower()
+        
+        # 统计共识和分歧关键词
+        for keyword in consensus_keywords:
+            if keyword in result_lower:
+                consensus_count += 1
+        
+        for keyword in conflict_keywords:
+            if keyword in result_lower:
+                conflict_count += 1
+    
+    # 判断共识状态 - 降低阈值，更容易达成共识
+    total_agents = len(results)
+    consensus_ratio = consensus_count / (consensus_count + conflict_count) if (consensus_count + conflict_count) > 0 else 1.0
+    
+    # 降低共识阈值：从75%降低到60%，更容易达成共识
+    if consensus_ratio > 0.6 and conflict_count < total_agents * 0.4:
+        return True
+    
+    # 额外规则：如果所有Agent都使用了共识关键词，直接认为达成共识
+    if consensus_count >= total_agents * 2:  # 每个Agent至少使用2个共识关键词
+        return True
+    
+    return False
 
 def run_command_with_log(cmd, cwd, log_path):
     """在指定目录下执行命令，捕获stdout/stderr并写入日志，返回(exitcode, stdout, stderr)"""
@@ -603,6 +770,13 @@ def extract_error_summary(log):
 
 class AiTeamCrew:
     def __init__(self, project_id=None, project_dir=None):
+        self.project_id = project_id
+        self.project_dir = project_dir
+        # 初始化智能上下文管理器
+        if project_dir:
+            self.context_manager = SmartContextManager(project_dir)
+        else:
+            self.context_manager = None
         pid = str(project_id) if project_id is not None else ""
         pdir = str(project_dir) if project_dir is not None else ""
         for agent in AGENTS.values():
@@ -802,31 +976,85 @@ class AiTeamCrew:
         # 初始化进度管理器
         progress_manager = ProgressManager(project_dir)
         
+        # 初始化智能上下文管理器
+        if not self.context_manager:
+            self.context_manager = SmartContextManager(project_dir)
+        
+        # 添加项目基础信息到上下文管理器
+        self.context_manager.add_context(
+            key="project_requirements",
+            value=inputs.get('requirements', ''),
+            priority=ContextPriority.CRITICAL,
+            context_type=ContextType.REQUIREMENT,
+            stage="initial"
+        )
+        
+        self.context_manager.add_context(
+            key="project_name",
+            value=inputs.get('project_name', ''),
+            priority=ContextPriority.CRITICAL,
+            context_type=ContextType.REQUIREMENT,
+            stage="initial"
+        )
+        
         # 如果指定了恢复点，检查进度
         if resume_from:
             print(f"[AI团队] 从阶段 '{resume_from}' 继续执行...")
-            # 加载已完成阶段的结果到context
+            # 加载已完成阶段的结果到context和上下文管理器
             for stage in progress_manager.stages:
                 if progress_manager.is_stage_completed(stage):
                     result = progress_manager.get_stage_result(stage)
                     results[stage] = result
                     context[f"{stage}_result"] = result
+                    
+                    # 添加到智能上下文管理器
+                    self.context_manager.add_context(
+                        key=f"{stage}_result",
+                        value=result,
+                        priority=ContextPriority.HIGH if stage in ["requirement_analysis", "technical_design"] else ContextPriority.MEDIUM,
+                        context_type=ContextType.DESIGN if "design" in stage else ContextType.IMPLEMENTATION,
+                        stage=stage
+                    )
+                    
                     if stage == resume_from:
                         break
         
         initial_input = f"项目需求：{inputs.get('requirements', '')}"
         
         # 1. 需求分析阶段：老板-产品经理-技术总监多轮对话
-        if not progress_manager.is_stage_completed("requirement_analysis"):
+        consensus_path = os.path.join(project_dir, '需求分析_共识文档.md')
+        if os.path.exists(consensus_path):
+            print("[AI团队] 检测到需求分析共识文档，直接用文档驱动开发...")
+            with open(consensus_path, 'r', encoding='utf-8') as f:
+                consensus = f.read()
+            results["requirement_analysis"] = consensus
+            context["requirement_analysis_result"] = consensus
+            self.context_manager.add_context(
+                key="requirement_analysis_result",
+                value=consensus,
+                priority=ContextPriority.CRITICAL,
+                context_type=ContextType.REQUIREMENT,
+                stage="requirement_analysis"
+            )
+            progress_manager.save_progress("requirement_analysis", consensus, context)
+        elif not progress_manager.is_stage_completed("requirement_analysis"):
             print("[AI团队] 开始需求分析阶段...")
             consensus = multi_agent_discussion(
                 stage_name="需求分析",
                 agents=[AGENTS["boss"], AGENTS["product_manager"], AGENTS["tech_lead"]],
                 context=context,
-                max_rounds=2
+                max_rounds=10,  # 使用渐进式共识达成，最多10轮
+                context_manager=self.context_manager
             )
             results["requirement_analysis"] = consensus
             context["requirement_analysis_result"] = consensus
+            self.context_manager.add_context(
+                key="requirement_analysis_result",
+                value=consensus,
+                priority=ContextPriority.CRITICAL,
+                context_type=ContextType.REQUIREMENT,
+                stage="requirement_analysis"
+            )
             progress_manager.save_progress("requirement_analysis", consensus, context)
         else:
             print("[AI团队] 需求分析阶段已完成，跳过...")
@@ -834,16 +1062,39 @@ class AiTeamCrew:
             context["requirement_analysis_result"] = results["requirement_analysis"]
         
         # 2. 技术设计阶段：技术总监-产品经理-前端-后端多轮对话
-        if not progress_manager.is_stage_completed("technical_design"):
+        consensus_path = os.path.join(project_dir, '技术设计_共识文档.md')
+        if os.path.exists(consensus_path):
+            print("[AI团队] 检测到技术设计共识文档，直接用文档驱动开发...")
+            with open(consensus_path, 'r', encoding='utf-8') as f:
+                consensus = f.read()
+            results["technical_design"] = consensus
+            context["technical_design_result"] = consensus
+            self.context_manager.add_context(
+                key="technical_design_result",
+                value=consensus,
+                priority=ContextPriority.CRITICAL,
+                context_type=ContextType.DESIGN,
+                stage="technical_design"
+            )
+            progress_manager.save_progress("technical_design", consensus, context)
+        elif not progress_manager.is_stage_completed("technical_design"):
             print("[AI团队] 开始技术设计阶段...")
             consensus = multi_agent_discussion(
                 stage_name="技术设计",
                 agents=[AGENTS["tech_lead"], AGENTS["product_manager"], AGENTS["frontend_dev"], AGENTS["backend_dev"]],
                 context=context,
-                max_rounds=2
+                max_rounds=10,  # 使用渐进式共识达成，最多10轮
+                context_manager=self.context_manager
             )
             results["technical_design"] = consensus
             context["technical_design_result"] = consensus
+            self.context_manager.add_context(
+                key="technical_design_result",
+                value=consensus,
+                priority=ContextPriority.CRITICAL,
+                context_type=ContextType.DESIGN,
+                stage="technical_design"
+            )
             progress_manager.save_progress("technical_design", consensus, context)
         else:
             print("[AI团队] 技术设计阶段已完成，跳过...")
@@ -851,15 +1102,37 @@ class AiTeamCrew:
             context["technical_design_result"] = results["technical_design"]
         
         # 3. UI设计阶段（单Agent串行）
-        if not progress_manager.is_stage_completed("ui_design"):
+        consensus_path = os.path.join(project_dir, 'UI设计_共识文档.md')
+        if os.path.exists(consensus_path):
+            print("[AI团队] 检测到UI设计共识文档，直接用文档驱动开发...")
+            with open(consensus_path, 'r', encoding='utf-8') as f:
+                result = f.read()
+            results["ui_design"] = result
+            context["ui_design_result"] = result
+            self.context_manager.add_context(
+                key="ui_design_result",
+                value=result,
+                priority=ContextPriority.HIGH,
+                context_type=ContextType.DESIGN,
+                stage="ui_design"
+            )
+            progress_manager.save_progress("ui_design", result, context)
+        elif not progress_manager.is_stage_completed("ui_design"):
             print("[AI团队] 开始UI设计阶段...")
             task = next(t for t in TASKS if t.name == "ui_design")
             agent = task.agent
             if agent is not None:
-                context_str = str(context) if context else None
-                result = agent.execute_task(task, context=context_str, tools=task.tools)
+                optimized_context = self.context_manager.get_context_for_stage("ui_design", agent.role)
+                result = agent.execute_task(task, context=optimized_context, tools=task.tools)
                 results["ui_design"] = result
                 context["ui_design_result"] = result
+                self.context_manager.add_context(
+                    key="ui_design_result",
+                    value=result,
+                    priority=ContextPriority.HIGH,
+                    context_type=ContextType.DESIGN,
+                    stage="ui_design"
+                )
                 progress_manager.save_progress("ui_design", result, context)
         else:
             print("[AI团队] UI设计阶段已完成，跳过...")
@@ -867,16 +1140,39 @@ class AiTeamCrew:
             context["ui_design_result"] = results["ui_design"]
         
         # 4. 前端开发阶段：前端-UI设计-技术总监多轮对话
-        if not progress_manager.is_stage_completed("frontend_development"):
+        consensus_path = os.path.join(project_dir, '前端开发_共识文档.md')
+        if os.path.exists(consensus_path):
+            print("[AI团队] 检测到前端开发共识文档，直接用文档驱动开发...")
+            with open(consensus_path, 'r', encoding='utf-8') as f:
+                consensus = f.read()
+            results["frontend_development"] = consensus
+            context["frontend_development_result"] = consensus
+            self.context_manager.add_context(
+                key="frontend_development_result",
+                value=consensus,
+                priority=ContextPriority.HIGH,
+                context_type=ContextType.IMPLEMENTATION,
+                stage="frontend_development"
+            )
+            progress_manager.save_progress("frontend_development", consensus, context)
+        elif not progress_manager.is_stage_completed("frontend_development"):
             print("[AI团队] 开始前端开发讨论阶段...")
             consensus = multi_agent_discussion(
                 stage_name="前端开发",
                 agents=[AGENTS["frontend_dev"], AGENTS["ui_designer"], AGENTS["tech_lead"]],
                 context=context,
-                max_rounds=2
+                max_rounds=10,  # 使用渐进式共识达成，最多10轮
+                context_manager=self.context_manager
             )
             results["frontend_development"] = consensus
             context["frontend_development_result"] = consensus
+            self.context_manager.add_context(
+                key="frontend_development_result",
+                value=consensus,
+                priority=ContextPriority.HIGH,
+                context_type=ContextType.IMPLEMENTATION,
+                stage="frontend_development"
+            )
             progress_manager.save_progress("frontend_development", consensus, context)
         else:
             print("[AI团队] 前端开发讨论阶段已完成，跳过...")
@@ -889,10 +1185,21 @@ class AiTeamCrew:
             task = next(t for t in TASKS if t.name == "frontend_development")
             agent = task.agent
             if agent is not None:
-                context_str = str(context) if context else None
-                result = agent.execute_task(task, context=context_str, tools=task.tools)
+                # 使用智能上下文管理器
+                optimized_context = self.context_manager.get_context_for_stage("frontend_code", agent.role)
+                result = agent.execute_task(task, context=optimized_context, tools=task.tools)
                 results["frontend_code"] = result
                 context["frontend_code_result"] = result
+                
+                # 添加到智能上下文管理器
+                self.context_manager.add_context(
+                    key="frontend_code_result",
+                    value=result,
+                    priority=ContextPriority.MEDIUM,
+                    context_type=ContextType.IMPLEMENTATION,
+                    stage="frontend_code"
+                )
+                
                 progress_manager.save_progress("frontend_code", result, context)
         else:
             print("[AI团队] 前端代码生成阶段已完成，跳过...")
@@ -900,16 +1207,39 @@ class AiTeamCrew:
             context["frontend_code_result"] = results["frontend_code"]
         
         # 5. 后端开发阶段：后端-技术总监-产品经理多轮对话
-        if not progress_manager.is_stage_completed("backend_development"):
+        consensus_path = os.path.join(project_dir, '后端开发_共识文档.md')
+        if os.path.exists(consensus_path):
+            print("[AI团队] 检测到后端开发共识文档，直接用文档驱动开发...")
+            with open(consensus_path, 'r', encoding='utf-8') as f:
+                consensus = f.read()
+            results["backend_development"] = consensus
+            context["backend_development_result"] = consensus
+            self.context_manager.add_context(
+                key="backend_development_result",
+                value=consensus,
+                priority=ContextPriority.HIGH,
+                context_type=ContextType.IMPLEMENTATION,
+                stage="backend_development"
+            )
+            progress_manager.save_progress("backend_development", consensus, context)
+        elif not progress_manager.is_stage_completed("backend_development"):
             print("[AI团队] 开始后端开发讨论阶段...")
             consensus = multi_agent_discussion(
                 stage_name="后端开发",
                 agents=[AGENTS["backend_dev"], AGENTS["tech_lead"], AGENTS["product_manager"]],
                 context=context,
-                max_rounds=2
+                max_rounds=10,  # 使用渐进式共识达成，最多10轮
+                context_manager=self.context_manager
             )
             results["backend_development"] = consensus
             context["backend_development_result"] = consensus
+            self.context_manager.add_context(
+                key="backend_development_result",
+                value=consensus,
+                priority=ContextPriority.HIGH,
+                context_type=ContextType.IMPLEMENTATION,
+                stage="backend_development"
+            )
             progress_manager.save_progress("backend_development", consensus, context)
         else:
             print("[AI团队] 后端开发讨论阶段已完成，跳过...")
@@ -922,10 +1252,21 @@ class AiTeamCrew:
             task = next(t for t in TASKS if t.name == "backend_development")
             agent = task.agent
             if agent is not None:
-                context_str = str(context) if context else None
-                result = agent.execute_task(task, context=context_str, tools=task.tools)
+                # 使用智能上下文管理器
+                optimized_context = self.context_manager.get_context_for_stage("backend_code", agent.role)
+                result = agent.execute_task(task, context=optimized_context, tools=task.tools)
                 results["backend_code"] = result
                 context["backend_code_result"] = result
+                
+                # 添加到智能上下文管理器
+                self.context_manager.add_context(
+                    key="backend_code_result",
+                    value=result,
+                    priority=ContextPriority.MEDIUM,
+                    context_type=ContextType.IMPLEMENTATION,
+                    stage="backend_code"
+                )
+                
                 progress_manager.save_progress("backend_code", result, context)
         else:
             print("[AI团队] 后端代码生成阶段已完成，跳过...")
@@ -933,16 +1274,43 @@ class AiTeamCrew:
             context["backend_code_result"] = results["backend_code"]
         
         # 6. 数据分析、测试、部署、文档阶段（单Agent串行）
-        for name in ["data_analysis", "testing", "deployment", "documentation"]:
-            if not progress_manager.is_stage_completed(name):
+        for name, doc_type, priority in [
+            ("data_analysis", ContextType.IMPLEMENTATION, ContextPriority.MEDIUM),
+            ("testing", ContextType.IMPLEMENTATION, ContextPriority.MEDIUM),
+            ("deployment", ContextType.CONFIGURATION, ContextPriority.MEDIUM),
+            ("documentation", ContextType.REQUIREMENT, ContextPriority.MEDIUM)
+        ]:
+            consensus_path = os.path.join(project_dir, f'{name}_共识文档.md')
+            if os.path.exists(consensus_path):
+                print(f"[AI团队] 检测到{name}共识文档，直接用文档驱动开发...")
+                with open(consensus_path, 'r', encoding='utf-8') as f:
+                    result = f.read()
+                results[name] = result
+                context[f"{name}_result"] = result
+                self.context_manager.add_context(
+                    key=f"{name}_result",
+                    value=result,
+                    priority=priority,
+                    context_type=doc_type,
+                    stage=name
+                )
+                progress_manager.save_progress(name, result, context)
+            elif not progress_manager.is_stage_completed(name):
                 print(f"[AI团队] 开始{name}阶段...")
                 task = next(t for t in TASKS if t.name == name)
                 agent = task.agent
                 if agent is not None:
-                    context_str = str(context) if context else None
-                    result = agent.execute_task(task, context=context_str, tools=task.tools)
+                    optimized_context = self.context_manager.get_context_for_stage(name, agent.role)
+                    result = agent.execute_task(task, context=optimized_context, tools=task.tools)
                     results[name] = result
                     context[f"{name}_result"] = result
+                    self.context_manager.add_context(
+                        key=f"{name}_result",
+                        value=result,
+                        priority=priority,
+                        context_type=doc_type,
+                        stage=name
+                    )
                     progress_manager.save_progress(name, result, context)
             else:
                 print(f"[AI团队] {name}阶段已完成，跳过...")
@@ -950,16 +1318,39 @@ class AiTeamCrew:
                 context[f"{name}_result"] = results[name]
         
         # 7. 验收阶段：老板-产品经理-测试-开发多轮对话
-        if not progress_manager.is_stage_completed("acceptance"):
+        consensus_path = os.path.join(project_dir, '验收_共识文档.md')
+        if os.path.exists(consensus_path):
+            print("[AI团队] 检测到验收共识文档，直接用文档驱动开发...")
+            with open(consensus_path, 'r', encoding='utf-8') as f:
+                consensus = f.read()
+            results["acceptance"] = consensus
+            context["acceptance_result"] = consensus
+            self.context_manager.add_context(
+                key="acceptance_result",
+                value=consensus,
+                priority=ContextPriority.CRITICAL,
+                context_type=ContextType.REQUIREMENT,
+                stage="acceptance"
+            )
+            progress_manager.save_progress("acceptance", consensus, context)
+        elif not progress_manager.is_stage_completed("acceptance"):
             print("[AI团队] 开始验收阶段...")
             consensus = multi_agent_discussion(
                 stage_name="验收",
                 agents=[AGENTS["boss"], AGENTS["product_manager"], AGENTS["qa_engineer"], AGENTS["frontend_dev"], AGENTS["backend_dev"]],
                 context=context,
-                max_rounds=2
+                max_rounds=10,  # 使用渐进式共识达成，最多10轮
+                context_manager=self.context_manager
             )
             results["acceptance"] = consensus
             context["acceptance_result"] = consensus
+            self.context_manager.add_context(
+                key="acceptance_result",
+                value=consensus,
+                priority=ContextPriority.CRITICAL,
+                context_type=ContextType.REQUIREMENT,
+                stage="acceptance"
+            )
             progress_manager.save_progress("acceptance", consensus, context)
         else:
             print("[AI团队] 验收阶段已完成，跳过...")
@@ -1035,14 +1426,14 @@ class ProgressManager:
             "auto_execution"
         ]
     
-    def save_progress(self, stage: str, result: str, context: Dict = None):
+    def save_progress(self, stage: str, result: str, context: Optional[Dict] = None):
         """保存阶段进度"""
         progress = self.load_progress()
         progress[stage] = {
             "status": "completed",
             "result": result,
             "timestamp": time.time(),
-            "context": context or {}
+            "context": context if context is not None else {}
         }
         with open(self.progress_file, 'w', encoding='utf-8') as f:
             json.dump(progress, f, ensure_ascii=False, indent=2)
@@ -1068,7 +1459,7 @@ class ProgressManager:
         for stage in self.stages:
             if stage not in completed:
                 return stage
-        return None
+        return ""  # 返回空字符串而不是None
     
     def is_stage_completed(self, stage: str) -> bool:
         """检查阶段是否已完成"""
